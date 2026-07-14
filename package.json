@@ -1,0 +1,10 @@
+{
+  "name": "ecommerce-microservice-root",
+  "version": "1.0.0",
+  "description": "Root orchestrator for Ecommerce Microservices",
+  "scripts": {
+    "build": "npm run build --prefix auth-service && npm run build --prefix product-service && npm run build --prefix order-service",
+    "db:generate": "npm run db:generate --prefix auth-service && npm run db:generate --prefix order-service"
+  },
+  "private": true
+}

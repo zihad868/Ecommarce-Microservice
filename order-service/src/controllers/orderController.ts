@@ -108,7 +108,7 @@ export const getOrderById = async (
   try {
     const order = await prisma.order.findFirst({
       where: {
-        id: req.params.id,
+        id: req.params.id as string,
         userId: req.user!.id,
       },
       include: { items: true },

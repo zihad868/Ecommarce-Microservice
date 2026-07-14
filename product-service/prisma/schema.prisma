@@ -1,4 +1,0 @@
-// This file is no longer used.
-// The product-service has been migrated from PostgreSQL (Prisma) to MongoDB (Mongoose).
-// The Mongoose model is defined at: src/models/Product.js
-// The MongoDB connection is managed at: src/utils/mongoClient.js

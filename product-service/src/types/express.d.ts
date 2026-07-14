@@ -1,3 +1,5 @@
+import { Request } from 'express';
+
 // Extend Express Request to include the authenticated user
 declare global {
   namespace Express {
