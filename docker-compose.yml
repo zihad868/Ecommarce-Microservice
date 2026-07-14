@@ -10,10 +10,16 @@ services:
       RABBITMQ_DEFAULT_USER: user
       RABBITMQ_DEFAULT_PASS: password
 
-  mongodb:
-    image: mongo:latest
+  postgres:
+    image: postgres:15
     ports:
-      - "27017:27017"
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postgres
+    volumes:
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
 
   auth-service:
     build:
@@ -24,10 +30,10 @@ services:
     environment:
       - PORT=3001
       - GRPC_PORT=50051
-      - MONGO_URI=mongodb://mongodb:27017/ecommerce-auth
+      - DATABASE_URL=postgresql://admin:password@postgres:5432/auth_db?schema=public
       - JWT_SECRET=supersecret123
     depends_on:
-      - mongodb
+      - postgres
     volumes:
       - ./protos:/usr/src/app/protos
 
@@ -40,11 +46,11 @@ services:
     environment:
       - PORT=3002
       - GRPC_PORT=50052
-      - MONGO_URI=mongodb://mongodb:27017/ecommerce-product
+      - DATABASE_URL=postgresql://admin:password@postgres:5432/product_db?schema=public
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
       - AUTH_GRPC_URL=auth-service:50051
     depends_on:
-      - mongodb
+      - postgres
       - rabbitmq
     volumes:
       - ./protos:/usr/src/app/protos
@@ -56,12 +62,12 @@ services:
       - "3003:3003"
     environment:
       - PORT=3003
-      - MONGO_URI=mongodb://mongodb:27017/ecommerce-order
+      - DATABASE_URL=postgresql://admin:password@postgres:5432/order_db?schema=public
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
       - AUTH_GRPC_URL=auth-service:50051
       - PRODUCT_GRPC_URL=product-service:50052
     depends_on:
-      - mongodb
+      - postgres
       - rabbitmq
     volumes:
       - ./protos:/usr/src/app/protos

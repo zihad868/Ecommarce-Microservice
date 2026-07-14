@@ -2,7 +2,8 @@ const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
 const path = require('path');
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 
 const PROTO_PATH = path.join(__dirname, '../../../protos/auth.proto');
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
@@ -22,13 +23,13 @@ const validateToken = async (call, callback) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecret123');
-    const user = await User.findById(decoded.id);
+    const user = await prisma.user.findUnique({ where: { id: decoded.id } });
 
     if (!user) {
       return callback(null, { valid: false, error: 'User not found' });
     }
 
-    callback(null, { valid: true, userId: user._id.toString(), error: '' });
+    callback(null, { valid: true, userId: user.id.toString(), error: '' });
   } catch (error) {
     callback(null, { valid: false, error: 'Invalid token' });
   }
