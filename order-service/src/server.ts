@@ -1,11 +1,11 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const rateLimit = require('express-rate-limit');
-const { getProductDetails } = require('./grpc/grpcClients');
-const { connectRabbitMQ } = require('./events/rabbitmq');
-const { startGrpcServer } = require('./grpc/orderServer');
-const errorHandler = require('./middlewares/errorHandler');
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import { connectRabbitMQ } from './events/rabbitmq';
+import { startGrpcServer } from './grpc/orderServer';
+import errorHandler from './middlewares/errorHandler';
+import orderRoutes from './routes/orderRoutes';
 
 const app = express();
 app.use(express.json());
@@ -22,7 +22,7 @@ const globalLimiter = rateLimit({
 app.use(globalLimiter);
 
 // ── Health Check ───────────────────────────────────────────
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.status(200).json({
     status: 'healthy',
     service: 'order-service',
@@ -33,11 +33,10 @@ app.get('/health', (req, res) => {
 });
 
 // ── Connect Services ───────────────────────────────────────
-connectRabbitMQ();
+void connectRabbitMQ();
 startGrpcServer();
 
 // ── REST API Routes ────────────────────────────────────────
-const orderRoutes = require('./routes/orderRoutes');
 app.use('/api/orders', orderRoutes);
 
 app.use(errorHandler);

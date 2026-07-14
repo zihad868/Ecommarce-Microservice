@@ -1,11 +1,12 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const rateLimit = require('express-rate-limit');
-const { startGrpcServer } = require('./grpc/productServer');
-const { connectRabbitMQ } = require('./events/rabbitmq');
-const { connectMongoDB } = require('./utils/mongoClient');
-const errorHandler = require('./middlewares/errorHandler');
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import { startGrpcServer } from './grpc/productServer';
+import { connectRabbitMQ } from './events/rabbitmq';
+import { connectMongoDB } from './utils/mongoClient';
+import errorHandler from './middlewares/errorHandler';
+import productRoutes from './routes/productRoutes';
 
 const app = express();
 app.use(express.json());
@@ -22,7 +23,7 @@ const globalLimiter = rateLimit({
 app.use(globalLimiter);
 
 // ── Health Check ───────────────────────────────────────────
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.status(200).json({
     status: 'healthy',
     service: 'product-service',
@@ -33,12 +34,11 @@ app.get('/health', (req, res) => {
 });
 
 // ── Connect to Databases ───────────────────────────────────
-connectMongoDB();
-connectRabbitMQ();
+void connectMongoDB();
+void connectRabbitMQ();
 startGrpcServer();
 
 // ── REST API Routes ────────────────────────────────────────
-const productRoutes = require('./routes/productRoutes');
 app.use('/api/products', productRoutes);
 
 app.use(errorHandler);
