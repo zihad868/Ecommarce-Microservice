@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: user
+      RABBITMQ_DEFAULT_PASS: password
+
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+
+  auth-service:
+    build:
+      context: ./auth-service
+    ports:
+      - "3001:3001"
+      - "50051:50051"
+    environment:
+      - PORT=3001
+      - GRPC_PORT=50051
+      - MONGO_URI=mongodb://mongodb:27017/ecommerce-auth
+      - JWT_SECRET=supersecret123
+    depends_on:
+      - mongodb
+    volumes:
+      - ./protos:/usr/src/app/protos
+
+  product-service:
+    build:
+      context: ./product-service
+    ports:
+      - "3002:3002"
+      - "50052:50052"
+    environment:
+      - PORT=3002
+      - GRPC_PORT=50052
+      - MONGO_URI=mongodb://mongodb:27017/ecommerce-product
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - AUTH_GRPC_URL=auth-service:50051
+    depends_on:
+      - mongodb
+      - rabbitmq
+    volumes:
+      - ./protos:/usr/src/app/protos
+
+  order-service:
+    build:
+      context: ./order-service
+    ports:
+      - "3003:3003"
+    environment:
+      - PORT=3003
+      - MONGO_URI=mongodb://mongodb:27017/ecommerce-order
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - AUTH_GRPC_URL=auth-service:50051
+      - PRODUCT_GRPC_URL=product-service:50052
+    depends_on:
+      - mongodb
+      - rabbitmq
+    volumes:
+      - ./protos:/usr/src/app/protos
