@@ -1,7 +1,8 @@
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
 const path = require('path');
-const Product = require('../models/Product');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 
 const PROTO_PATH = path.join(__dirname, '../../../protos/product.proto');
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, { keepCase: true, longs: String, enums: String, defaults: true, oneofs: true });
@@ -10,7 +11,7 @@ const productProto = grpc.loadPackageDefinition(packageDefinition).product;
 const getProduct = async (call, callback) => {
   try {
     const { productId } = call.request;
-    const product = await Product.findById(productId);
+    const product = await prisma.product.findUnique({ where: { id: Number(productId) } });
 
     if (!product) {
       return callback(null, { success: false, error: 'Product not found' });
@@ -18,11 +19,11 @@ const getProduct = async (call, callback) => {
 
     callback(null, { 
       success: true, 
-      id: product._id.toString(), 
+      id: product.id.toString(), 
       name: product.name, 
       price: product.price, 
       stock: product.stock, 
-      error: '' 
+      error: ''  
     });
   } catch (error) {
     callback(null, { success: false, error: 'Server Error' });
