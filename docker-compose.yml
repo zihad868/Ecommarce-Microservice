@@ -1,73 +1,195 @@
 version: '3.8'
 
 services:
+
+  # ── Message Broker ─────────────────────────────────────────────────────────
   rabbitmq:
     image: rabbitmq:3-management
+    container_name: rabbitmq
     ports:
       - "5672:5672"
       - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: user
       RABBITMQ_DEFAULT_PASS: password
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  postgres:
-    image: postgres:15
+  # ── Shared Cache (Redis) ───────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
     ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: postgres
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
-      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # ── Auth DB (PostgreSQL — dedicated instance) ──────────────────────────────
+  auth-db:
+    image: postgres:15-alpine
+    container_name: auth-db
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_password
+      POSTGRES_DB: auth_db
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Order DB (PostgreSQL — dedicated instance) ─────────────────────────────
+  order-db:
+    image: postgres:15-alpine
+    container_name: order-db
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: order_user
+      POSTGRES_PASSWORD: order_password
+      POSTGRES_DB: order_db
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U order_user -d order_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Product DB (MongoDB — dedicated instance) ──────────────────────────────
+  product-db:
+    image: mongo:7-jammy
+    container_name: product-db
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: product_user
+      MONGO_INITDB_ROOT_PASSWORD: product_password
+      MONGO_INITDB_DATABASE: product_db
+    volumes:
+      - product_db_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Auth Service ───────────────────────────────────────────────────────────
   auth-service:
     build:
       context: ./auth-service
+    container_name: auth-service
     ports:
       - "3001:3001"
       - "50051:50051"
     environment:
       - PORT=3001
       - GRPC_PORT=50051
-      - DATABASE_URL=postgresql://admin:password@postgres:5432/auth_db?schema=public
-      - JWT_SECRET=supersecret123
+      - DATABASE_URL=postgresql://auth_user:auth_password@auth-db:5432/auth_db?schema=public
+      - JWT_SECRET=supersecret123_change_in_production
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
-      - postgres
+      auth-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./protos:/usr/src/app/protos
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
+  # ── Product Service ────────────────────────────────────────────────────────
   product-service:
     build:
       context: ./product-service
+    container_name: product-service
     ports:
       - "3002:3002"
       - "50052:50052"
     environment:
       - PORT=3002
       - GRPC_PORT=50052
-      - DATABASE_URL=postgresql://admin:password@postgres:5432/product_db?schema=public
+      - MONGODB_URL=mongodb://product_user:product_password@product-db:27017/product_db?authSource=admin
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
       - AUTH_GRPC_URL=auth-service:50051
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
-      - postgres
-      - rabbitmq
+      product-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
     volumes:
       - ./protos:/usr/src/app/protos
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
+  # ── Order Service ──────────────────────────────────────────────────────────
   order-service:
     build:
       context: ./order-service
+    container_name: order-service
     ports:
       - "3003:3003"
+      - "50053:50053"
     environment:
       - PORT=3003
-      - DATABASE_URL=postgresql://admin:password@postgres:5432/order_db?schema=public
+      - GRPC_PORT=50053
+      - DATABASE_URL=postgresql://order_user:order_password@order-db:5432/order_db?schema=public
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
       - AUTH_GRPC_URL=auth-service:50051
       - PRODUCT_GRPC_URL=product-service:50052
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
-      - postgres
-      - rabbitmq
+      order-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
     volumes:
       - ./protos:/usr/src/app/protos
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3003/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+# ── Named Volumes (data persisted across container restarts) ───────────────
+volumes:
+  redis_data:
+  auth_db_data:
+  order_db_data:
+  product_db_data:

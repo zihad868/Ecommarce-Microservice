@@ -1,19 +1,4 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-model Product {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String?
-  price       Float
-  stock       Int      @default(0)
-  category    String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
+// This file is no longer used.
+// The product-service has been migrated from PostgreSQL (Prisma) to MongoDB (Mongoose).
+// The Mongoose model is defined at: src/models/Product.js
+// The MongoDB connection is managed at: src/utils/mongoClient.js

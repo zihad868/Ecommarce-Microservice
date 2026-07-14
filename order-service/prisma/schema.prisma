@@ -9,25 +9,35 @@ datasource db {
 
 enum OrderStatus {
   PENDING
+  PROCESSING
   COMPLETED
   CANCELLED
 }
 
 model Order {
-  id          Int          @id @default(autoincrement())
+  id          String      @id @default(cuid())
   userId      String
   totalAmount Float
-  status      OrderStatus  @default(PENDING)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  status      OrderStatus @default(PENDING)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
   items       OrderItem[]
+
+  // Indexes for 10M user scale performance
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([userId, createdAt]) // Most common query: user's orders sorted by date
 }
 
 model OrderItem {
-  id        Int    @id @default(autoincrement())
+  id        String @id @default(cuid())
   productId String
   quantity  Int
   price     Float
-  orderId   Int
+  orderId   String
   order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([productId])
 }
