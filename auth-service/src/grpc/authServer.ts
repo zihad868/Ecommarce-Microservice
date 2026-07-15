@@ -1,11 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
-import jwt from 'jsonwebtoken';
-import { PrismaClient } from '@prisma/client';
-import { getRedisClient } from '../utils/redisClient';
-
-const prisma = new PrismaClient();
+import * as authService from '../services/authService';
 
 const PROTO_PATH = path.join(__dirname, '../../../protos/auth.proto');
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
@@ -57,44 +53,8 @@ const validateToken = async (
       return;
     }
 
-    // 1. Verify JWT signature locally (no DB hit)
-    let decoded: JwtPayload;
-    try {
-      decoded = jwt.verify(
-        token,
-        process.env.JWT_SECRET || 'supersecret123'
-      ) as JwtPayload;
-    } catch {
-      callback(null, { valid: false, userId: '', error: 'Invalid token' });
-      return;
-    }
-
-    const userId = decoded.id;
-    const redis = getRedisClient();
-    const cacheKey = `user:${userId}`;
-
-    // 2. Check Redis cache first
-    const cachedUser = await redis.get(cacheKey);
-    if (cachedUser) {
-      console.log(`[gRPC] Cache HIT for user ${userId}`);
-      callback(null, { valid: true, userId, error: '' });
-      return;
-    }
-
-    // 3. Cache MISS → query PostgreSQL
-    console.log(`[gRPC] Cache MISS for user ${userId} — querying DB`);
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-
-    if (!user) {
-      callback(null, { valid: false, userId: '', error: 'User not found' });
-      return;
-    }
-
-    // 4. Store in Redis for future requests
-    const toCache: CachedUser = { id: user.id, email: user.email, role: user.role };
-    await redis.setex(cacheKey, USER_CACHE_TTL, JSON.stringify(toCache));
-
-    callback(null, { valid: true, userId: user.id, error: '' });
+    const result = await authService.validateToken(token);
+    callback(null, result);
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : 'Unknown error';
     console.error('[gRPC] validateToken error:', errMsg);

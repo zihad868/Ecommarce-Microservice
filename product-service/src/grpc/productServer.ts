@@ -1,8 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
-import prisma from '../utils/prismaClient';
-import { getRedisClient } from '../utils/redisClient';
+import * as productService from '../services/productService';
 
 const PROTO_PATH = path.join(__dirname, '../../../protos/product.proto');
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
@@ -29,37 +28,13 @@ interface ProductResponse {
   error: string;
 }
 
-// Cache TTL: 10 minutes
-const PRODUCT_CACHE_TTL = 600;
-
 const getProduct = async (
   call: grpc.ServerUnaryCall<ProductRequest, ProductResponse>,
   callback: grpc.sendUnaryData<ProductResponse>
 ): Promise<void> => {
   try {
     const { productId } = call.request;
-    const redis = getRedisClient();
-    const cacheKey = `product:${productId}`;
-
-    // 1. Check Redis cache
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      console.log(`[gRPC] Cache HIT for product ${productId}`);
-      const p = JSON.parse(cached);
-      callback(null, {
-        success: true,
-        id: p.id,
-        name: p.name,
-        price: p.price,
-        stock: p.stock,
-        error: '',
-      });
-      return;
-    }
-
-    // 2. Cache MISS -> query PostgreSQL
-    console.log(`[gRPC] Cache MISS for product ${productId} — querying PostgreSQL`);
-    const product = await prisma.product.findUnique({ where: { id: productId } });
+    const product = await productService.getProductById(productId);
 
     if (!product) {
       callback(null, {
@@ -72,9 +47,6 @@ const getProduct = async (
       });
       return;
     }
-
-    // 3. Cache for future calls
-    await redis.setex(cacheKey, PRODUCT_CACHE_TTL, JSON.stringify(product));
 
     callback(null, {
       success: true,
