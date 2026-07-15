@@ -1,7 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
-import Product from '../models/Product';
+import prisma from '../utils/prismaClient';
 import { getRedisClient } from '../utils/redisClient';
 
 const PROTO_PATH = path.join(__dirname, '../../../protos/product.proto');
@@ -48,7 +48,7 @@ const getProduct = async (
       const p = JSON.parse(cached);
       callback(null, {
         success: true,
-        id: p._id.toString(),
+        id: p.id,
         name: p.name,
         price: p.price,
         stock: p.stock,
@@ -57,9 +57,9 @@ const getProduct = async (
       return;
     }
 
-    // 2. Cache MISS -> query MongoDB
-    console.log(`[gRPC] Cache MISS for product ${productId} — querying MongoDB`);
-    const product = await Product.findById(productId).lean();
+    // 2. Cache MISS -> query PostgreSQL
+    console.log(`[gRPC] Cache MISS for product ${productId} — querying PostgreSQL`);
+    const product = await prisma.product.findUnique({ where: { id: productId } });
 
     if (!product) {
       callback(null, {
@@ -78,7 +78,7 @@ const getProduct = async (
 
     callback(null, {
       success: true,
-      id: product._id.toString(),
+      id: product.id,
       name: product.name,
       price: product.price,
       stock: product.stock,

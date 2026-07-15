@@ -1,5 +1,5 @@
 import amqp from 'amqplib';
-import Product from '../models/Product';
+import prisma from '../utils/prismaClient';
 import { getRedisClient } from '../utils/redisClient';
 
 let channel: amqp.Channel | null = null;
@@ -32,9 +32,18 @@ export const connectRabbitMQ = async (): Promise<void> => {
 
           // Update DB
           for (const item of event.items) {
-            await Product.findByIdAndUpdate(item.productId, {
-              $inc: { stock: -item.quantity },
-            });
+            try {
+              await prisma.product.update({
+                where: { id: item.productId },
+                data: {
+                  stock: {
+                    decrement: item.quantity,
+                  },
+                },
+              });
+            } catch (err) {
+               console.error(`Could not update stock for product ${item.productId}`, err);
+            }
 
             // Invalidate Redis product cache since stock has changed
             const redis = getRedisClient();

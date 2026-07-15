@@ -4,7 +4,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { startGrpcServer } from './grpc/productServer';
 import { connectRabbitMQ } from './events/rabbitmq';
-import { connectMongoDB } from './utils/mongoClient';
+
 import errorHandler from './middlewares/errorHandler';
 import productRoutes from './routes/productRoutes';
 
@@ -27,14 +27,14 @@ app.get('/health', (_req, res) => {
   res.status(200).json({
     status: 'healthy',
     service: 'product-service',
-    database: 'mongodb',
+    database: 'postgresql',
     cache: 'redis',
     timestamp: new Date().toISOString(),
   });
 });
 
 // ── Connect to Databases ───────────────────────────────────
-void connectMongoDB();
+
 void connectRabbitMQ();
 startGrpcServer();
 

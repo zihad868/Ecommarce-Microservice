@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
-import Product, { IProduct } from '../models/Product';
+import prisma from '../utils/prismaClient';
 import { getRedisClient } from '../utils/redisClient';
+import { Prisma } from '@prisma/client';
 
 // Cache TTL: 10 minutes for individual products
 const PRODUCT_CACHE_TTL = 600;
@@ -13,7 +14,23 @@ export const createProduct = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const product = await Product.create(req.body as Partial<IProduct>);
+    const data = req.body as any;
+    
+    // Ensure attributes is passed correctly as JSON if it exists
+    if (data.attributes && typeof data.attributes !== 'object') {
+       data.attributes = JSON.parse(data.attributes);
+    }
+
+    const product = await prisma.product.create({ 
+      data: {
+        name: data.name,
+        description: data.description,
+        price: data.price,
+        stock: data.stock,
+        category: data.category,
+        attributes: data.attributes || {},
+      }
+    });
 
     // Invalidate product list caches on create
     const redis = getRedisClient();
@@ -55,31 +72,41 @@ export const getProducts = async (
     const skip = (Number(page) - 1) * Number(limit);
     const take = Number(limit);
 
-    // Build MongoDB filter
-    const filter: Record<string, unknown> = {};
+    // Build Prisma filter
+    const where: Prisma.ProductWhereInput = {};
 
-    if (search) filter.$text = { $search: search };
-    if (category) filter.category = category;
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } }
+      ];
+    }
+    
+    if (category) {
+      where.category = category;
+    }
 
     if (minPrice !== undefined || maxPrice !== undefined) {
-      const priceFilter: Record<string, number> = {};
-      if (minPrice !== undefined) priceFilter.$gte = Number(minPrice);
-      if (maxPrice !== undefined) priceFilter.$lte = Number(maxPrice);
-      filter.price = priceFilter;
+      where.price = {};
+      if (minPrice !== undefined) where.price.gte = Number(minPrice);
+      if (maxPrice !== undefined) where.price.lte = Number(maxPrice);
     }
 
     // Sorting
-    let sortObj: Record<string, 1 | -1> = { createdAt: -1 };
+    let orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
     if (sort) {
       const [field, order] = sort.split(':');
-      if (field) sortObj = { [field]: order === 'asc' ? 1 : -1 };
+      if (field) {
+        orderBy = { [field]: order === 'asc' ? 'asc' : 'desc' };
+      }
     }
 
-    const products = await Product.find(filter)
-      .sort(sortObj)
-      .skip(skip)
-      .limit(take)
-      .lean();
+    const products = await prisma.product.findMany({
+      where,
+      orderBy,
+      skip,
+      take,
+    });
 
     const result = { success: true, count: products.length, data: products };
     await redis.setex(cacheKey, LIST_CACHE_TTL, JSON.stringify(result));
@@ -105,7 +132,10 @@ export const getProduct = async (
       return;
     }
 
-    const product = await Product.findById(req.params.id).lean();
+    const product = await prisma.product.findUnique({
+      where: { id: req.params.id as string },
+    });
+    
     if (!product) {
       res.status(404).json({ success: false, error: 'Product not found' });
       return;
@@ -124,15 +154,28 @@ export const updateProduct = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const product = await Product.findByIdAndUpdate(
-      req.params.id,
-      req.body as Partial<IProduct>,
-      { new: true, runValidators: true }
-    );
-    if (!product) {
+    const existing = await prisma.product.findUnique({ where: { id: req.params.id as string } });
+    if (!existing) {
       res.status(404).json({ success: false, error: 'Product not found' });
       return;
     }
+
+    const data = req.body as any;
+    if (data.attributes && typeof data.attributes !== 'object') {
+       data.attributes = JSON.parse(data.attributes);
+    }
+
+    const product = await prisma.product.update({
+      where: { id: req.params.id as string },
+      data: {
+        name: data.name,
+        description: data.description,
+        price: data.price,
+        stock: data.stock,
+        category: data.category,
+        attributes: data.attributes,
+      },
+    });
 
     // Invalidate caches
     const redis = getRedisClient();
@@ -152,11 +195,15 @@ export const deleteProduct = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const product = await Product.findByIdAndDelete(req.params.id);
-    if (!product) {
+    const existing = await prisma.product.findUnique({ where: { id: req.params.id as string } });
+    if (!existing) {
       res.status(404).json({ success: false, error: 'Product not found' });
       return;
     }
+
+    const product = await prisma.product.delete({
+      where: { id: req.params.id as string }
+    });
 
     // Invalidate caches
     const redis = getRedisClient();

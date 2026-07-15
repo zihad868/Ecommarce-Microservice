@@ -69,20 +69,20 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Product DB (MongoDB — dedicated instance) ──────────────────────────────
+  # ── Product DB (PostgreSQL — dedicated instance) ──────────────────────────────
   product-db:
-    image: mongo:7-jammy
+    image: postgres:15-alpine
     container_name: product-db
     ports:
-      - "27017:27017"
+      - "5435:5432"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: product_user
-      MONGO_INITDB_ROOT_PASSWORD: product_password
-      MONGO_INITDB_DATABASE: product_db
+      POSTGRES_USER: product_user
+      POSTGRES_PASSWORD: product_password
+      POSTGRES_DB: product_db
     volumes:
-      - product_db_data:/data/db
+      - product_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD-SHELL", "pg_isready -U product_user -d product_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -127,7 +127,7 @@ services:
     environment:
       - PORT=3002
       - GRPC_PORT=50052
-      - MONGODB_URL=mongodb://product_user:product_password@product-db:27017/product_db?authSource=admin
+      - DATABASE_URL=postgresql://product_user:product_password@product-db:5432/product_db?schema=public
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
       - AUTH_GRPC_URL=auth-service:50051
       - REDIS_HOST=redis
