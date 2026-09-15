@@ -1,326 +1,632 @@
-# 📦 E-Commerce Microservice — Full Project Review
+# 📦 E-Commerce Microservice — Complete Documentation
 
-> **Beginner-friendly guide** to understand this project end-to-end, especially **gRPC**.
+> **Stack:** TypeScript · Node.js · Express · gRPC · PostgreSQL · Redis · RabbitMQ · Prisma · Docker
 
 ---
 
 ## 📑 Table of Contents
 
-- [What Is This Project?](#-what-is-this-project)
-- [Architecture Overview](#-architecture-overview)
-- [What is gRPC?](#-what-is-grpc-for-beginners)
-- [The Proto Files — Contracts](#-the-proto-files--the-contracts)
-- [Auth Service](#-auth-service--deep-dive)
-- [Product Service](#-product-service--deep-dive)
-- [Order Service](#-order-service--deep-dive)
-- [RabbitMQ — Async Messaging](#-rabbitmq--async-messaging)
-- [Redis — Caching Layer](#-redis--caching-layer)
-- [Docker Setup](#-docker-setup)
-- [Full Request Lifecycle](#-full-request-lifecycle-place-an-order)
-- [File Map](#-full-file-map)
-- [Key Patterns](#-key-patterns-to-remember)
+1. [Project Overview](#1-project-overview)
+2. [System Architecture](#2-system-architecture)
+3. [How Services Communicate](#3-how-services-communicate)
+   - [Communication #1 — REST (Client → Service)](#communication-1--rest-client--service)
+   - [Communication #2 — gRPC (Service → Service)](#communication-2--grpc-service--service)
+   - [Communication #3 — RabbitMQ (Async Events)](#communication-3--rabbitmq-async-events)
+4. [RabbitMQ — Deep Explanation](#4-rabbitmq--deep-explanation)
+5. [Auth Service](#5-auth-service)
+6. [Product Service](#6-product-service)
+7. [Order Service](#7-order-service)
+8. [Shared Infrastructure](#8-shared-infrastructure)
+9. [Docker & Deployment](#9-docker--deployment)
+10. [Full Lifecycle — Place an Order](#10-full-lifecycle--place-an-order)
+11. [API Reference](#11-api-reference)
+12. [Dependencies](#12-dependencies)
 
 ---
 
-## 🧠 What Is This Project?
+## 1. Project Overview
 
-This is a **Node.js + TypeScript microservices-based e-commerce backend** with **3 independent services** that communicate using:
+This is a **production-style e-commerce backend** built with a **microservices architecture**. Instead of one giant application, the system is split into 3 independent services — each with its own database, its own logic, and its own responsibility.
 
-| Method | Used For | Style |
+### The 3 Services
+
+| Service | Port (REST) | Port (gRPC) | Database | Role |
+|---|---|---|---|---|
+| `auth-service` | `:3001` | `:50051` | `auth-db` (PostgreSQL) | User registration, login, JWT token validation |
+| `product-service` | `:3002` | `:50052` | `product-db` (PostgreSQL) | Product CRUD, stock management |
+| `order-service` | `:3003` | `:50053` | `order-db` (PostgreSQL) | Order creation and retrieval |
+
+### Shared Infrastructure
+
+| Component | Port | Role |
 |---|---|---|
-| **gRPC** | Service-to-service calls (auth check, product lookup) | Synchronous (waits for reply) |
-| **RabbitMQ** | Events after an action (stock decrement) | Asynchronous (fire and forget) |
-| **REST HTTP** | External clients (browsers, mobile apps) | Synchronous |
+| **Redis** | `:6379` | In-memory cache (users, products) |
+| **RabbitMQ** | `:5672` / `:15672` | Async message broker (order events) |
 
 ---
 
-## 🏗️ Architecture Overview
+## 2. System Architecture
 
 ```
-          ┌──────────────────────────────────────────────────────┐
-          │                  CLIENT (HTTP Requests)              │
-          └──────────┬─────────────────┬─────────────┬──────────┘
-                     │                 │             │
-               :3001/api         :3002/api      :3003/api
-                     │                 │             │
-     ┌───────────────▼──┐   ┌──────────▼──┐   ┌─────▼────────────┐
-     │   auth-service   │   │product-     │   │  order-service   │
-     │                  │   │service      │   │                  │
-     │  REST  → :3001   │   │ REST → :3002│   │  REST  → :3003   │
-     │  gRPC  → :50051  │   │ gRPC → :50052   │  gRPC  → :50053  │
-     └──────────┬───────┘   └──────┬──────┘   └────┬─────────────┘
-                │                  │               │
-     ┌──────────▼──────┐  ┌────────▼──────┐  ┌────▼──────────────┐
-     │    auth-db      │  │  product-db   │  │    order-db        │
-     │  (PostgreSQL)   │  │ (PostgreSQL)  │  │  (PostgreSQL)      │
-     │    Port 5433    │  │   Port 5435   │  │    Port 5434       │
-     └─────────────────┘  └───────────────┘  └───────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                          EXTERNAL CLIENTS                           │
+│                    (Browser / Mobile / Postman)                     │
+└────────────────┬──────────────────┬──────────────────┬─────────────┘
+                 │                  │                  │
+         HTTP REST              HTTP REST          HTTP REST
+         :3001                  :3002               :3003
+                 │                  │                  │
+┌────────────────▼──┐  ┌────────────▼────┐  ┌─────────▼────────────┐
+│   AUTH-SERVICE    │  │ PRODUCT-SERVICE  │  │   ORDER-SERVICE      │
+│                   │  │                  │  │                      │
+│  • Register       │  │  • List products │  │  • Create order      │
+│  • Login          │  │  • Get product   │  │  • Get my orders     │
+│  • Get profile    │  │  • Create product│  │  • Get order by ID   │
+│                   │  │  • Update product│  │                      │
+│  gRPC Server      │  │  • Delete product│  │  gRPC Server         │
+│  :50051           │  │                  │  │  :50053              │
+│  ValidateToken    │  │  gRPC Server     │  │  GetOrder            │
+│                   │  │  :50052          │  │  GetOrdersByUser     │
+│                   │  │  GetProduct      │  │                      │
+└────────┬──────────┘  └──────────────────┘  └──────┬──┬────────────┘
+         │                       ▲                   │  │
+         │                       │ gRPC GetProduct    │  │
+         │                       └───────────────────┘  │
+         │                                              │
+         │◄──── gRPC ValidateToken ─────────────────────┘
+         │
+┌────────▼─────────┐   ┌───────────────────┐   ┌──────────────────────┐
+│    auth-db       │   │   product-db       │   │     order-db         │
+│  (PostgreSQL)    │   │   (PostgreSQL)     │   │   (PostgreSQL)       │
+│  :5433           │   │   :5435            │   │   :5434              │
+│  users table     │   │   products table   │   │   orders table       │
+└──────────────────┘   └───────────────────┘   └──────────────────────┘
 
-     ┌──────────────────────────────────────────────────────────────┐
-     │                   Redis (Cache)  :6379                       │
-     └──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                        REDIS   :6379                                │
+│       auth: "user:<id>" TTL 5m     product: "product:<id>" TTL 10m │
+└─────────────────────────────────────────────────────────────────────┘
 
-     ┌──────────────────────────────────────────────────────────────┐
-     │           RabbitMQ (Message Broker)  :5672 / :15672          │
-     └──────────────────────────────────────────────────────────────┘
-```
-
-### 🔗 Who Talks to Whom?
-
-```
-order-service  ──gRPC──►  auth-service    (validate JWT token)
-order-service  ──gRPC──►  product-service (get product price/stock)
-order-service  ──MQ────►  product-service (order.created event)
-product-service ◄──MQ───  order-service   (consumes: decrement stock)
+┌─────────────────────────────────────────────────────────────────────┐
+│                     RABBITMQ   :5672                                │
+│   order-service ──PUBLISH──► [order.created] ──CONSUME──► product  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🔑 What is gRPC? (For Beginners)
+## 3. How Services Communicate
 
-### The Simple Analogy
+There are **3 different communication patterns** used in this project:
 
-> **REST API** = Sending a letter (text, slow, waits for postman)
-> **gRPC** = Making a phone call (binary, fast, direct connection)
+---
 
-### REST vs gRPC
+### Communication #1 — REST (Client → Service)
 
-| Feature | REST (HTTP/JSON) | gRPC (Protobuf) |
-|---|---|---|
-| Data format | JSON (human-readable text) | Protobuf (binary, compact) |
-| Speed | Slower | **~7x faster** |
-| Schema | Optional (OpenAPI) | **Required** (`.proto` file) |
-| Transport | HTTP/1.1 | HTTP/2 |
-| Best for | Client ↔ Server | **Server ↔ Server** |
-| Error handling | HTTP status codes | gRPC status codes |
-
-### How gRPC Works — 4 Steps
+Used when **a browser/app/Postman** talks to any service.
 
 ```
-STEP 1 — DEFINE
-  Write a .proto file describing functions & data shapes
-  Both the server AND client must use the same .proto
-
-STEP 2 — SERVE
-  One service creates a gRPC Server
-  Registers handler functions
-  Listens on a port (e.g. :50051)
-
-STEP 3 — CALL
-  Another service creates a gRPC Client
-  Points it at the server's address
-  Calls a function as if it were local
-
-STEP 4 — RESPOND
-  Server runs the handler
-  Returns the result back to the client
+CLIENT
+  │
+  │  POST /api/orders
+  │  Authorization: Bearer <JWT>
+  │  Body: { items: [...] }
+  │
+  ▼
+ORDER-SERVICE (Express HTTP server on :3003)
 ```
 
-### Code Example (simplified)
+- Format: **JSON over HTTP**
+- Style: **Synchronous** — client waits for the response
+- Used by: Humans / frontend apps / API tools
+
+---
+
+### Communication #2 — gRPC (Service → Service)
+
+Used when **one service needs data from another service synchronously** (needs to wait for the answer before continuing).
+
+```
+ORDER-SERVICE                          AUTH-SERVICE
+     │                                      │
+     │  gRPC: ValidateToken({ token })      │
+     │─────────────────────────────────────►│
+     │                                      │  verify JWT
+     │  ◄─────────────────────────────────── │
+     │  { valid: true, userId: "abc" }      │
+     │                                      │
+(continue processing)
+```
+
+```
+ORDER-SERVICE                          PRODUCT-SERVICE
+     │                                      │
+     │  gRPC: GetProduct({ productId })     │
+     │─────────────────────────────────────►│
+     │                                      │  check Redis + DB
+     │  ◄─────────────────────────────────── │
+     │  { name, price, stock }              │
+     │                                      │
+(calculate total, save order)
+```
+
+- Format: **Protobuf (binary)** — faster than JSON
+- Style: **Synchronous** — waits for reply
+- Defined by: `.proto` files in `/protos/`
+- Used by: Services talking to each other
+
+**Why not use REST between services?**
+> gRPC is faster (binary vs text), has enforced contracts (`.proto`), supports streaming, and uses HTTP/2 which allows multiplexing.
+
+---
+
+### Communication #3 — RabbitMQ (Async Events)
+
+Used when **a service wants to notify another service** but does NOT need to wait for the result.
+
+```
+ORDER-SERVICE                    RABBITMQ BROKER            PRODUCT-SERVICE
+     │                               │                           │
+     │  publish("order.created",     │                           │
+     │    { orderId, items })        │                           │
+     │──────────────────────────────►│                           │
+     │                               │  store message in queue   │
+     │  ← response to client ✅      │                           │
+     │  (doesn't wait!)              │──────────────────────────►│
+                                                          consume message
+                                                          decrement stock
+                                                          delete Redis cache
+```
+
+- Format: **JSON in a persistent queue**
+- Style: **Asynchronous** — fire and forget
+- Used by: order-service (publisher) → product-service (consumer)
+
+---
+
+## 4. RabbitMQ — Deep Explanation
+
+### What is RabbitMQ?
+
+RabbitMQ is a **Message Broker** — it's like a **post office** between services.
+
+- **Publisher** = the one who drops a letter in the mailbox
+- **Queue** = the mailbox where letters wait
+- **Consumer** = the one who picks up and reads the letters
+
+### Core Concepts
+
+#### Queue
+A named buffer that stores messages until a consumer is ready to process them.
+
+```
+"order.created" queue:
+┌─────────────────────────────────────────────────┐
+│  [msg1]  [msg2]  [msg3]  ...                    │
+└─────────────────────────────────────────────────┘
+  oldest ←─────────────────────────── newest
+```
+
+#### Publisher
+Sends a message to a queue. It does NOT know or care about the consumer.
 
 ```typescript
-// === SERVER SIDE (auth-service) ===
-server.addService(AuthService.service, {
-  ValidateToken: (call, callback) => {
-    const { token } = call.request;   // input from caller
-    const result = verify(token);
-    callback(null, result);            // send reply back
+// order-service/src/events/rabbitmq.ts
+export const publishEvent = async (queue: string, data: unknown): Promise<void> => {
+  await channel.assertQueue(queue, { durable: true }); // create queue if not exists
+  channel.sendToQueue(
+    queue,
+    Buffer.from(JSON.stringify(data)), // convert to binary
+    { persistent: true }               // survive RabbitMQ restart
+  );
+};
+
+// Called like this after saving an order:
+await publishEvent('order.created', {
+  orderId: order.id,
+  items: [{ productId: 'abc', quantity: 2 }]
+});
+```
+
+#### Consumer
+Listens to a queue and processes each message one-by-one.
+
+```typescript
+// product-service/src/events/rabbitmq.ts
+await channel.consume('order.created', async (msg) => {
+  if (msg !== null) {
+    const event = JSON.parse(msg.content.toString()); // decode JSON
+    // { orderId: "x", items: [{ productId, quantity }] }
+
+    for (const item of event.items) {
+      await productService.decrementProductStock(item.productId, item.quantity);
+    }
+
+    channel.ack(msg); // ✅ tell RabbitMQ: I processed this, remove it
   }
 });
-server.bindAsync('0.0.0.0:50051', ...); // listen
+```
 
-// === CLIENT SIDE (order-service) ===
-const authClient = new AuthService('auth-service:50051', credentials);
+#### Acknowledgement (ack)
+When a consumer calls `channel.ack(msg)`, it tells RabbitMQ:
+> "I successfully processed this message. You can safely delete it."
 
-authClient.ValidateToken({ token }, (err, response) => {
-  if (response.valid) {
-    // user is authenticated ✅
+If the consumer crashes **before acking**, RabbitMQ re-queues the message and delivers it again. This ensures **no messages are lost**.
+
+#### Durability
+Both the queue and the messages are marked as **durable/persistent**:
+
+```typescript
+channel.assertQueue('order.created', { durable: true });   // queue survives RabbitMQ restart
+channel.sendToQueue('order.created', data, { persistent: true }); // message survives too
+```
+
+### The Full Message Lifecycle in This Project
+
+```
+1. User places an order via POST /api/orders
+
+2. order-service:
+   ├─ Validates user via gRPC (auth)
+   ├─ Validates products via gRPC (product)
+   ├─ Saves order to order-db
+   ├─ PUBLISHES to "order.created" queue:
+   │   {
+   │     orderId: "clx_order_789",
+   │     items: [
+   │       { productId: "clx_prod_123", quantity: 2 },
+   │       { productId: "clx_prod_456", quantity: 1 }
+   │     ]
+   │   }
+   └─ Returns order to the user ✅ (does NOT wait for stock update)
+
+3. RabbitMQ broker:
+   └─ Stores message in "order.created" queue
+
+4. product-service consumer (running in background):
+   ├─ Receives the message from queue
+   ├─ For productId "clx_prod_123": stock -= 2
+   ├─ For productId "clx_prod_456": stock -= 1
+   ├─ Deletes Redis cache for each product
+   ├─ Deletes all "products:list:*" cache keys
+   └─ Calls channel.ack(msg) → message removed from queue
+```
+
+### Why Not Use gRPC for Stock Decrement?
+
+| Approach | Problem |
+|---|---|
+| gRPC (sync) | Order creation would be **blocked** waiting for stock update. If product-service is slow, the user waits longer. |
+| RabbitMQ (async) | Order returns immediately. Stock update happens in background. If product-service is down, the message **waits in the queue** and is processed when it comes back online. |
+
+### RabbitMQ Connection with Auto-Retry
+
+Both services implement auto-retry if RabbitMQ isn't ready yet:
+
+```typescript
+export const connectRabbitMQ = async (): Promise<void> => {
+  try {
+    const connection = await amqp.connect(process.env.RABBITMQ_URL);
+    channel = await connection.createChannel();
+    console.log('RabbitMQ Connected');
+  } catch (err) {
+    console.error('RabbitMQ failed, retrying in 5s...');
+    setTimeout(() => void connectRabbitMQ(), 5000); // retry after 5 seconds
   }
-});
+};
 ```
 
 ---
 
-## 📄 The Proto Files — The "Contracts"
+## 5. Auth Service
 
-All proto files live in `/protos/` and are **shared via Docker volume** across all 3 services.
+**Directory:** `auth-service/`
 
-> **Rule:** If the `.proto` says a function exists, the server MUST implement it and the client CAN call it.
+### What It Does
+The auth-service is the **identity provider** of the system. Every service that needs to know "who is this user?" asks auth-service via gRPC.
 
----
+### Internal Architecture
 
-### `auth.proto`
-
-```protobuf
-syntax = "proto3";
-package auth;
-
-service AuthService {
-  rpc ValidateToken (TokenRequest) returns (TokenResponse) {}
-}
-
-message TokenRequest {
-  string token = 1;            // the JWT token to validate
-}
-
-message TokenResponse {
-  bool   valid  = 1;           // is the token valid?
-  string userId = 2;           // who owns it?
-  string error  = 3;           // error message if invalid
-}
+```
+auth-service/src/
+│
+├── server.ts             ← Entry point: boots Express + gRPC
+├── routes/
+│   └── authRoutes.ts     ← Defines URL paths
+├── middlewares/
+│   ├── authMiddleware.ts ← Protects /api/auth/me with local JWT check
+│   └── errorHandler.ts   ← Global error catcher
+├── controllers/
+│   └── authController.ts ← Extracts req body, calls service, sends response
+├── services/
+│   └── authService.ts    ← Core business logic (JWT, bcrypt, Redis, Prisma)
+├── grpc/
+│   └── authServer.ts     ← gRPC server: exposes ValidateToken to other services
+└── utils/
+    └── redisClient.ts    ← Singleton Redis connection
 ```
 
-**Plain English:** *"Send me a JWT, I'll tell you if it's valid and whose it is."*
+### Request Flow (Layer by Layer)
 
----
-
-### `product.proto`
-
-```protobuf
-syntax = "proto3";
-package product;
-
-service ProductService {
-  rpc GetProduct (ProductRequest) returns (ProductResponse) {}
-}
-
-message ProductRequest {
-  string productId = 1;
-}
-
-message ProductResponse {
-  bool   success = 1;
-  string id      = 2;
-  string name    = 3;
-  double price   = 4;
-  int32  stock   = 5;
-  string error   = 6;
-}
+```
+HTTP Request → POST /api/auth/login
+       │
+       ▼
+server.ts (Express app)
+  - rate limiter: max 20 req/15 min on /api/auth/*
+  - authLimiter applied
+       │
+       ▼
+authRoutes.ts
+  router.post('/login', login)
+       │
+       ▼
+authController.ts → login()
+  - Extract { email, password } from req.body
+  - Validate: both fields must exist
+  - Call authService.loginUser(email, password)
+       │
+       ▼
+authService.ts → loginUser()
+  1. prisma.user.findUnique({ where: { email } })
+  2. bcrypt.compare(password, user.password)
+  3. jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '1d' })
+  4. redis.setex("user:<id>", 300, JSON.stringify(user))
+  5. return { token }
+       │
+       ▼
+authController.ts
+  res.status(200).json({ success: true, token })
 ```
 
-**Plain English:** *"Send me a product ID, I'll return its price and stock level."*
+### gRPC Server (authServer.ts) — Detailed
 
----
-
-### `order.proto`
-
-```protobuf
-syntax = "proto3";
-package order;
-
-service OrderService {
-  rpc GetOrder        (OrderRequest)      returns (OrderResponse)      {}
-  rpc GetOrdersByUser (UserOrdersRequest) returns (UserOrdersResponse) {}
-}
-```
-
-**Plain English:** *"Get a single order by ID, or get all orders for a user."*
-
----
-
-## 🔐 Auth Service — Deep Dive
-
-**Location:** `auth-service/src/`
-
-### Responsibilities
-- ✅ Register & login users (REST on `:3001`)
-- ✅ Issue JWT tokens (valid 1 day)
-- ✅ **Validate JWT tokens for other services via gRPC** (`:50051`)
-- ✅ Cache users in Redis to avoid DB hits on every request
-
-### gRPC Server Startup (`authServer.ts`)
+This is the **most important part** of auth-service for inter-service communication.
 
 ```typescript
-// 1. Load the proto file at runtime
-const packageDefinition = protoLoader.loadSync('protos/auth.proto');
-const authProto = grpc.loadPackageDefinition(packageDefinition);
-
-// 2. Create gRPC server
-const server = new grpc.Server();
-
-// 3. Register functions from the proto
-server.addService(authProto.auth.AuthService.service, {
-  ValidateToken: validateToken     // ← handler function
+// 1. Load the .proto file
+const PROTO_PATH = path.join(__dirname, '../../../protos/auth.proto');
+const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
+  keepCase: true,  // don't convert camelCase
+  longs: String,   // convert int64 to string
+  enums: String,   // convert enums to string names
+  defaults: true,  // populate default values
+  oneofs: true,    // group oneof fields
 });
+const authProto = grpc.loadPackageDefinition(packageDefinition) as any;
 
-// 4. Start listening
-server.bindAsync('0.0.0.0:50051', grpc.ServerCredentials.createInsecure(), ...);
-```
+// 2. The handler function (runs when someone calls ValidateToken)
+const validateToken = async (call, callback) => {
+  const { token } = call.request; // input from the caller
 
-### Token Validation Flow
-
-```
-[gRPC request] token arrives
-        │
-        ▼
-  jwt.verify(token, JWT_SECRET)
-        │
-   INVALID ──────────────────► return { valid: false, error: "Invalid token" }
-        │ VALID
-        ▼
-  Check Redis: GET "user:<userId>"
-        │
-    HIT ▼ ────────────────────────────► Return cached data (fast ⚡)
-        │ MISS
-        ▼
-  PostgreSQL query
-        │
-        ▼
-  Redis SETEX "user:<id>" 300 <json>   ← store for next time
-        │
-        ▼
-  Return { valid: true, userId }
-```
-
-### Database Schema (auth-db)
-
-```prisma
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String                         // bcrypt hashed (never plain text)
-  role      Role     @default(USER)        // USER | ADMIN (RBAC ready)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([email])                         // fast login lookups
-}
-```
-
-### REST Endpoints
-
-| Method | URL | What it does |
-|---|---|---|
-| `POST` | `/api/auth/register` | Create account, return JWT |
-| `POST` | `/api/auth/login` | Login, return JWT |
-| `GET` | `/health` | Health check for Docker |
-
----
-
-## 📦 Product Service — Deep Dive
-
-**Location:** `product-service/src/`
-
-### Responsibilities
-- ✅ CRUD for products (REST on `:3002`)
-- ✅ **Expose `GetProduct` via gRPC** (`:50052`) — used by Order Service
-- ✅ **Listen to RabbitMQ** `order.created` → decrement stock automatically
-- ✅ Cache products in Redis (10 min individual, 1 min lists)
-
-### gRPC Handler (`productServer.ts`)
-
-```typescript
-const getProduct = async (call, callback) => {
-  const { productId } = call.request;           // from order-service
-
-  const product = await productService.getProductById(productId);
-  // checks Redis first, then PostgreSQL
-
-  if (!product) {
-    callback(null, { success: false, error: 'Product not found' });
+  if (!token) {
+    callback(null, { valid: false, userId: '', error: 'No token provided' });
     return;
   }
 
+  const result = await authService.validateToken(token);
+  //  result = { valid: true, userId: "abc", error: "" }
+  //      OR = { valid: false, userId: "", error: "Invalid token" }
+
+  callback(null, result); // send response back to caller
+};
+
+// 3. Create the gRPC server and register service
+const server = new grpc.Server();
+server.addService(authProto.auth.AuthService.service, {
+  ValidateToken: validateToken   // maps proto method name to handler
+});
+
+// 4. Bind to port and start
+server.bindAsync('0.0.0.0:50051', grpc.ServerCredentials.createInsecure(), ...);
+```
+
+### Token Validation Logic (authService.ts)
+
+```typescript
+export const validateToken = async (token: string) => {
+  // Step 1: Verify the JWT signature and expiry
+  let decoded: any;
+  try {
+    decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecret123');
+  } catch {
+    return { valid: false, userId: '', error: 'Invalid token' };
+  }
+
+  const userId = decoded.id;
+
+  // Step 2: Check Redis cache first (fast path - avoids DB query)
+  const redis = getRedisClient();
+  const cachedUser = await redis.get(`user:${userId}`);
+  if (cachedUser) {
+    return { valid: true, userId, error: '' }; // ← cache HIT, return immediately
+  }
+
+  // Step 3: Cache MISS — query the database
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    return { valid: false, userId: '', error: 'User not found' };
+  }
+
+  // Step 4: Store in Redis for next time (5 min TTL)
+  await redis.setex(`user:${userId}`, 300, JSON.stringify({
+    id: user.id, email: user.email, role: user.role
+  }));
+
+  return { valid: true, userId: user.id, error: '' };
+};
+```
+
+### REST API Endpoints
+
+| Method | Path | Auth Required | Controller | Description |
+|---|---|---|---|---|
+| `POST` | `/api/auth/register` | ❌ No | `register()` | Create account, returns JWT |
+| `POST` | `/api/auth/login` | ❌ No | `login()` | Login, returns JWT |
+| `GET` | `/api/auth/me` | ✅ Yes (local JWT) | `getMe()` | Get current user profile |
+| `GET` | `/health` | ❌ No | inline | Docker health check |
+
+> **Note:** The `/me` endpoint in auth-service uses **local JWT verification** (not gRPC) because it's internal to auth-service itself.
+
+### Rate Limiting
+
+```
+Global limiter:  500 req / 60 sec    (all routes)
+Auth limiter:     20 req / 15 min    (/api/auth/* only — prevents brute force)
+```
+
+### Database Schema
+
+```prisma
+// auth-service/prisma/schema.prisma
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id        String   @id @default(cuid())  // unique ID like "clx1abc2def3"
+  email     String   @unique
+  password  String                          // bcrypt hash, never plain text
+  role      Role     @default(USER)         // for future role-based access control
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])                          // index for fast login lookup
+}
+```
+
+### NPM Dependencies
+
+| Package | Purpose |
+|---|---|
+| `express` | HTTP REST API server |
+| `@grpc/grpc-js` | gRPC server implementation |
+| `@grpc/proto-loader` | Load `.proto` files at runtime |
+| `jsonwebtoken` | Create and verify JWT tokens |
+| `bcryptjs` | Hash passwords securely |
+| `ioredis` | Redis client |
+| `@prisma/client` | Type-safe database ORM |
+| `express-rate-limit` | Rate limiting middleware |
+| `cors` | Enable cross-origin requests |
+| `dotenv` | Load `.env` environment variables |
+
+---
+
+## 6. Product Service
+
+**Directory:** `product-service/`
+
+### What It Does
+The product-service manages the product catalog. It is the **only source of truth for product data**. It exposes:
+- A **REST API** for CRUD operations
+- A **gRPC server** so order-service can look up product prices and stock
+- A **RabbitMQ consumer** to decrement stock when orders are placed
+
+### Internal Architecture
+
+```
+product-service/src/
+│
+├── server.ts              ← Entry point: boots Express + gRPC + RabbitMQ consumer
+├── routes/
+│   └── productRoutes.ts   ← Defines URL paths + which need auth
+├── middlewares/
+│   ├── authMiddleware.ts  ← Calls auth-service via gRPC to protect write routes
+│   └── errorHandler.ts   ← Global error catcher
+├── controllers/
+│   └── productController.ts ← Extracts req data, calls service, sends response
+├── services/
+│   └── productService.ts  ← All business logic: CRUD, cache, stock
+├── grpc/
+│   └── productServer.ts   ← gRPC server: exposes GetProduct to order-service
+├── events/
+│   └── rabbitmq.ts        ← Connects to RabbitMQ, CONSUMES "order.created"
+└── utils/
+    ├── redisClient.ts     ← Redis singleton connection
+    └── prismaClient.ts    ← Prisma singleton connection
+```
+
+### Request Flow — GET /api/products (with filters)
+
+```
+GET /api/products?category=electronics&minPrice=100&page=2
+       │
+       ▼
+server.ts → productRoutes.ts → getProducts()
+       │
+       ▼
+productController.ts → getProducts()
+  - Extract query params from req.query
+  - Call productService.getProducts({ category, minPrice, page })
+       │
+       ▼
+productService.ts → getProducts()
+  1. Build cacheKey: "products:list:{"category":"electronics",...}"
+  2. Redis GET cacheKey
+       │
+     HIT ▼──────────────────────────────────────► return cached JSON (fast ⚡)
+       │ MISS
+       ▼
+  3. Build Prisma where filter:
+       where = { category: "electronics", price: { gte: 100 } }
+  4. Apply sorting, pagination (skip, take)
+  5. prisma.product.findMany({ where, orderBy, skip, take })
+  6. Redis SETEX cacheKey 60 <result>      (cache for 60 seconds)
+  7. return { success: true, count: 5, data: [...] }
+       │
+       ▼
+productController.ts
+  res.status(200).json(result)
+```
+
+### Request Flow — POST /api/products (create product, protected)
+
+```
+POST /api/products
+Authorization: Bearer <JWT>
+Body: { name, price, stock, category, ... }
+       │
+       ▼
+productRoutes.ts: router.post('/', protect, createProduct)
+       │
+       ▼  (protect middleware runs first)
+authMiddleware.ts → protect()
+  - Extract token from Authorization header
+  - authClient.ValidateToken({ token })  ← gRPC call to auth-service:50051
+  - If invalid → 401
+  - If valid → req.user = { id: userId }
+       │
+       ▼
+productController.ts → createProduct()
+  - Call productService.createProduct(req.body)
+       │
+       ▼
+productService.ts → createProduct()
+  1. prisma.product.create({ data: { name, price, stock, ... } })
+  2. Invalidate all "products:list:*" cache keys
+  3. return product
+```
+
+### gRPC Server (productServer.ts) — Detailed
+
+```typescript
+// Handler for GetProduct — called by order-service
+const getProduct = async (call, callback) => {
+  const { productId } = call.request;  // input from order-service
+
+  // getProductById checks Redis first, then PostgreSQL
+  const product = await productService.getProductById(productId);
+
+  if (!product) {
+    callback(null, {
+      success: false, id: '', name: '', price: 0, stock: 0,
+      error: 'Product not found'
+    });
+    return;
+  }
+
+  // Send back the full product details
   callback(null, {
     success: true,
     id: product.id,
@@ -330,37 +636,93 @@ const getProduct = async (call, callback) => {
     error: '',
   });
 };
+
+// Register handler and start server
+server.addService(productProto.product.ProductService.service, {
+  GetProduct: getProduct
+});
+server.bindAsync('0.0.0.0:50052', grpc.ServerCredentials.createInsecure(), ...);
 ```
 
-### RabbitMQ Consumer Flow
+### RabbitMQ Consumer (events/rabbitmq.ts) — Detailed
 
+```typescript
+export const connectRabbitMQ = async (): Promise<void> => {
+  const connection = await amqp.connect(process.env.RABBITMQ_URL);
+  channel = await connection.createChannel();
+  const queue = 'order.created';
+
+  // Declare the queue (idempotent — safe to call multiple times)
+  await channel.assertQueue(queue, { durable: true });
+
+  // Start consuming messages
+  await channel.consume(queue, async (msg) => {
+    if (msg !== null && channel) {
+      try {
+        // Parse the message
+        const event: OrderCreatedEvent = JSON.parse(msg.content.toString());
+        // event = { orderId: "x", items: [{ productId: "y", quantity: 2 }] }
+
+        // For each item in the order, reduce stock
+        for (const item of event.items) {
+          await productService.decrementProductStock(item.productId, item.quantity);
+          // This does: UPDATE products SET stock = stock - 2 WHERE id = "y"
+          // And deletes Redis cache: DEL "product:y"
+        }
+
+        // Invalidate all list caches (stock count changed)
+        const redis = getRedisClient();
+        const listKeys = await redis.keys('products:list:*');
+        if (listKeys.length > 0) await redis.del(...listKeys);
+
+        channel.ack(msg); // ✅ Mark as processed
+      } catch (err) {
+        channel.ack(msg); // Ack even on error to avoid blocking queue
+      }
+    }
+  });
+};
 ```
-order-service publishes ──► "order.created" queue
-                                       │
-product-service consumes ◄─────────────┘
-        │
-        ├─ Parse event: { orderId, items: [{ productId, quantity }] }
-        │
-        ├─ For each item:
-        │     UPDATE products SET stock = stock - quantity WHERE id = productId
-        │     DELETE Redis cache for that product
-        │
-        └─ Invalidate all "products:list:*" cache keys
-```
 
-### REST Endpoints
+### REST API Endpoints
 
-| Method | URL | Auth Required | What it does |
+| Method | Path | Auth Required | Description |
 |---|---|---|---|
-| `GET` | `/api/products` | ❌ | List all (filterable/pageable) |
-| `GET` | `/api/products/:id` | ❌ | Get single product |
-| `POST` | `/api/products` | ✅ | Create product |
-| `PUT` | `/api/products/:id` | ✅ | Update product |
-| `DELETE` | `/api/products/:id` | ✅ | Delete product |
+| `GET` | `/api/products` | ❌ No | List products (supports filters) |
+| `GET` | `/api/products/:id` | ❌ No | Get single product |
+| `POST` | `/api/products` | ✅ gRPC auth | Create product |
+| `PUT` | `/api/products/:id` | ✅ gRPC auth | Update product |
+| `DELETE` | `/api/products/:id` | ✅ gRPC auth | Delete product |
+| `GET` | `/health` | ❌ No | Docker health check |
 
-### Database Schema (product-db)
+### Query Filters for GET /api/products
+
+| Query Param | Type | Example | Description |
+|---|---|---|---|
+| `page` | number | `?page=2` | Page number (default: 1) |
+| `limit` | number | `?limit=20` | Items per page (default: 10) |
+| `search` | string | `?search=laptop` | Search in name & description |
+| `category` | string | `?category=electronics` | Filter by category |
+| `minPrice` | number | `?minPrice=50` | Minimum price |
+| `maxPrice` | number | `?maxPrice=500` | Maximum price |
+| `sort` | string | `?sort=price:asc` | Sort by field:direction |
+
+### Redis Caching Strategy
+
+```
+Individual product:   key = "product:<id>"            TTL = 600s (10 min)
+Product lists:        key = "products:list:<query>"   TTL = 60s  (1 min)
+
+Cache is DELETED when:
+  - Product is updated  → del "product:<id>" + del "products:list:*"
+  - Product is deleted  → del "product:<id>" + del "products:list:*"
+  - Order placed (via RabbitMQ) → del "product:<id>" + del "products:list:*"
+```
+
+### Database Schema
 
 ```prisma
+// product-service/prisma/schema.prisma
 model Product {
   id          String   @id @default(cuid())
   name        String
@@ -368,455 +730,808 @@ model Product {
   price       Float
   stock       Int
   category    String?
-  attributes  Json     @default("{}")   // flexible extra data
+  attributes  Json     @default("{}")  // flexible key-value extra data
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 ```
 
+### NPM Dependencies
+
+| Package | Purpose |
+|---|---|
+| `express` | HTTP REST API server |
+| `@grpc/grpc-js` | gRPC server implementation |
+| `@grpc/proto-loader` | Load `.proto` files at runtime |
+| `amqplib` | RabbitMQ client (AMQP protocol) |
+| `ioredis` | Redis client |
+| `@prisma/client` | Type-safe database ORM |
+| `express-rate-limit` | Rate limiting (1000 req/min — read-heavy) |
+| `cors` | Enable cross-origin requests |
+| `dotenv` | Load `.env` environment variables |
+
 ---
 
-## 🛒 Order Service — Deep Dive
+## 7. Order Service
 
-**Location:** `order-service/src/`
+**Directory:** `order-service/`
 
-### Responsibilities
-- ✅ Create and retrieve orders (REST on `:3003`)
-- ✅ **Call Auth Service via gRPC** to verify every incoming JWT
-- ✅ **Call Product Service via gRPC** to validate product + stock
-- ✅ **Publish `order.created`** to RabbitMQ after saving
-- ✅ Expose gRPC server (`:50053`) for other services to query orders
+### What It Does
+The order-service is the most **connected** service — it talks to every other component:
+- Calls **auth-service** via gRPC to verify the user's JWT on every request
+- Calls **product-service** via gRPC to get product details and validate stock
+- Saves orders to **order-db** (PostgreSQL)
+- Publishes to **RabbitMQ** after each successful order
+- Exposes its own **gRPC server** for querying orders
 
-### Two gRPC Clients (`grpcClients.ts`)
+### Internal Architecture
+
+```
+order-service/src/
+│
+├── server.ts               ← Entry point: boots Express + gRPC + RabbitMQ publisher
+├── routes/
+│   └── orderRoutes.ts      ← Defines URL paths (all protected)
+├── middlewares/
+│   ├── authMiddleware.ts   ← Calls auth-service gRPC to verify JWT on every request
+│   └── errorHandler.ts    ← Global error catcher
+├── controllers/
+│   └── orderController.ts  ← Extracts req data, calls service, sends response
+├── services/
+│   └── orderService.ts     ← Core logic: validate products, calculate total, save order
+├── grpc/
+│   ├── orderServer.ts      ← gRPC SERVER: exposes GetOrder, GetOrdersByUser
+│   └── grpcClients.ts      ← gRPC CLIENTS: connects to auth + product services
+├── events/
+│   └── rabbitmq.ts         ← PUBLISHES "order.created" to RabbitMQ
+└── types/
+    └── express.d.ts        ← TypeScript type extension (adds req.user)
+```
+
+### Request Flow — POST /api/orders (full detail)
+
+```
+POST /api/orders
+Authorization: Bearer eyJhbGci...
+Body: {
+  "items": [
+    { "productId": "clx_prod_123", "quantity": 2 },
+    { "productId": "clx_prod_456", "quantity": 1 }
+  ]
+}
+
+━━━━━ LAYER 1: server.ts ━━━━━
+  - Express app receives request
+  - Rate limiter: max 300 req/min
+  - Route matched: POST /api/orders
+
+━━━━━ LAYER 2: authMiddleware.ts ━━━━━
+  protect() function:
+  1. Extract token from "Authorization: Bearer ..." header
+  2. If no token → 401 Unauthorized (stop here)
+  3. authClient.ValidateToken({ token }) ← gRPC CALL to auth-service:50051
+  4. Wait for gRPC response:
+     - If { valid: false } → 401 (stop here)
+     - If { valid: true, userId: "clx_user_456" } → continue
+  5. req.user = { id: "clx_user_456" }
+  6. next() → go to controller
+
+━━━━━ LAYER 3: orderController.ts ━━━━━
+  createOrder():
+  1. Extract items from req.body
+  2. Validate: items must be a non-empty array
+  3. Call orderService.createOrder(req.user.id, items)
+  4. On success → res.status(201).json({ success: true, data: order })
+  5. On "not found" / "insufficient stock" → 400 error
+
+━━━━━ LAYER 4: orderService.ts ━━━━━
+  createOrder(userId, items):
+  1. Loop through each item:
+     a. getProductDetails(item.productId) ← gRPC CALL to product-service:50052
+     b. If !response.success → throw Error("Product X not found")
+     c. If response.stock < item.quantity → throw Error("Insufficient stock")
+     d. totalAmount += response.price * item.quantity
+     e. Push validated item (productId, quantity, price)
+
+  2. prisma.order.create({
+       data: {
+         userId,
+         totalAmount,
+         status: 'COMPLETED',
+         items: { create: validatedItems }  // nested write
+       }
+     })
+
+  3. publishEvent('order.created', {
+       orderId: order.id,
+       items: validatedItems  // contains { productId, quantity, price }
+     })
+
+  4. return order
+
+━━━━━ RESPONSE ━━━━━
+  {
+    "success": true,
+    "data": {
+      "id": "clx_order_789",
+      "userId": "clx_user_456",
+      "totalAmount": 1999.98,
+      "status": "COMPLETED",
+      "items": [
+        { "productId": "clx_prod_123", "quantity": 2, "price": 999.99 },
+        { "productId": "clx_prod_456", "quantity": 1, "price": 0 }
+      ]
+    }
+  }
+```
+
+### gRPC Clients (grpcClients.ts) — Detailed
 
 ```typescript
-// Client 1: talks to auth-service
+// Load auth.proto and create a client pointing to auth-service
+const authProto = grpc.loadPackageDefinition(
+  protoLoader.loadSync('protos/auth.proto', { ... })
+) as any;
+
 export const authClient = new authProto.auth.AuthService(
-  process.env.AUTH_GRPC_URL || 'localhost:50051',
-  grpc.credentials.createInsecure()
+  process.env.AUTH_GRPC_URL || 'localhost:50051',  // Docker: "auth-service:50051"
+  grpc.credentials.createInsecure()                // no TLS (internal network)
 );
 
-// Client 2: talks to product-service
+// Load product.proto and create a client pointing to product-service
+const productProto = grpc.loadPackageDefinition(
+  protoLoader.loadSync('protos/product.proto', { ... })
+) as any;
+
 export const productClient = new productProto.product.ProductService(
-  process.env.PRODUCT_GRPC_URL || 'localhost:50052',
+  process.env.PRODUCT_GRPC_URL || 'localhost:50052', // Docker: "product-service:50052"
   grpc.credentials.createInsecure()
 );
 
-// Helper wrapper (callback → Promise)
+// Wrapper: converts callback-style gRPC to a Promise (easier to use with async/await)
 export const getProductDetails = (productId: string): Promise<ProductResponse> => {
   return new Promise((resolve, reject) => {
-    productClient.GetProduct({ productId }, (err, response) => {
-      if (err) return reject(err);
-      resolve(response);
-    });
+    productClient.GetProduct(
+      { productId },                        // request payload
+      (err: Error | null, response) => {    // callback when response arrives
+        if (err) return reject(err);
+        resolve(response);
+      }
+    );
   });
 };
 ```
 
-### Auth Middleware — gRPC protecting REST routes
+### Auth Middleware in Order Service (authMiddleware.ts)
 
-```
-HTTP Request → POST /api/orders
-  Header: "Authorization: Bearer eyJhbGci..."
-                │
-                ▼
-  authMiddleware.protect()
-                │
-  Extract token from header
-                │
-  authClient.ValidateToken({ token })  ← gRPC call to auth-service:50051
-                │
-        INVALID ▼                  VALID ▼
-   401 Unauthorized          req.user = { id: userId }
-                                        │
-                                        ▼
-                                   next() → controller
-```
+```typescript
+// This runs before EVERY order route handler
+export const protect = (req, res, next): void => {
+  // Step 1: Get token
+  const token = req.headers.authorization?.split(' ')[1]; // "Bearer <token>" → "<token>"
+  if (!token) {
+    res.status(401).json({ error: 'Not authorized' });
+    return;
+  }
 
-### Create Order Flow (`orderService.ts`)
-
-```
-createOrder(userId, items[])
-        │
-        ├─ For each item:
-        │    1. getProductDetails(productId)  ← gRPC to product-service
-        │    2. if !product → throw Error("Product not found")
-        │    3. if stock < quantity → throw Error("Insufficient stock")
-        │    4. totalAmount += price × quantity
-        │
-        ▼
-  prisma.order.create({
-    userId, totalAmount, status: 'COMPLETED',
-    items: { create: validatedItems }
-  })
-        │
-        ▼
-  publishEvent('order.created', { orderId, items })  ← RabbitMQ
-        │
-        ▼
-  return order ✅
+  // Step 2: Call auth-service via gRPC
+  authClient.ValidateToken({ token }, (err, response) => {
+    if (err || !response.valid) {
+      res.status(401).json({ error: response?.error || 'Not authorized' });
+      return;
+    }
+    // Step 3: Attach user info to request
+    req.user = { id: response.userId };
+    next(); // go to controller
+  });
+};
 ```
 
-### Database Schema (order-db)
+### gRPC Server (orderServer.ts) — Exposes Orders to Other Services
+
+```typescript
+// Two handlers:
+
+// 1. GetOrder — find a specific order by ID
+const getOrder = async (call, callback) => {
+  const { orderId } = call.request;
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: { items: true },
+  });
+  callback(null, order
+    ? { success: true, id: order.id, userId: order.userId, ... }
+    : { success: false, error: 'Order not found' }
+  );
+};
+
+// 2. GetOrdersByUser — find all orders for a user
+const getOrdersByUser = async (call, callback) => {
+  const { userId } = call.request;
+  const orders = await prisma.order.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'desc' },
+    take: 50,                          // max 50 orders per query
+  });
+  callback(null, {
+    success: true,
+    orders: orders.map(o => ({ id: o.id, userId: o.userId, ... })),
+    error: '',
+  });
+};
+
+// Register both handlers
+server.addService(orderProto.order.OrderService.service, {
+  GetOrder: getOrder,
+  GetOrdersByUser: getOrdersByUser,
+});
+server.bindAsync('0.0.0.0:50053', ...);
+```
+
+### REST API Endpoints
+
+| Method | Path | Auth Required | Description |
+|---|---|---|---|
+| `POST` | `/api/orders` | ✅ gRPC auth | Create a new order |
+| `GET` | `/api/orders` | ✅ gRPC auth | Get all orders for current user |
+| `GET` | `/api/orders/:id` | ✅ gRPC auth | Get specific order (must belong to user) |
+| `GET` | `/health` | ❌ No | Docker health check |
+
+### Security: Order Isolation
+
+When fetching a single order, the service ensures the order **belongs to the requesting user**:
+
+```typescript
+// orderService.ts
+export const getOrderByIdAndUser = async (orderId: string, userId: string) => {
+  return await prisma.order.findFirst({
+    where: {
+      id: orderId,
+      userId,           // ← BOTH conditions must match
+    },
+    include: { items: true },
+  });
+};
+// If orderId is valid but userId doesn't match → returns null → 404
+// This prevents user A from seeing user B's orders
+```
+
+### Database Schema
 
 ```prisma
+// order-service/prisma/schema.prisma
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  CANCELLED
+}
+
 model Order {
   id          String      @id @default(cuid())
-  userId      String                              // auth-service user ID
+  userId      String                            // references User in auth-db
   totalAmount Float
-  status      OrderStatus @default(PENDING)       // PENDING|PROCESSING|COMPLETED|CANCELLED
+  status      OrderStatus @default(PENDING)
   items       OrderItem[]
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
-  @@index([userId])
-  @@index([status])
-  @@index([userId, createdAt])                    // most common query
+  @@index([userId])              // fast lookup: "my orders"
+  @@index([status])              // fast lookup: "all pending orders"
+  @@index([createdAt])           // fast sort by date
+  @@index([userId, createdAt])   // most common: "my orders sorted by date"
 }
 
 model OrderItem {
   id        String @id @default(cuid())
-  productId String
+  productId String              // references Product in product-db
   quantity  Int
-  price     Float                                 // price snapshot at order time
+  price     Float               // price at time of order (snapshot!)
   orderId   String
-  order     Order  @relation(...)
+  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@index([productId])
 }
 ```
 
-### REST Endpoints
+> **Important:** The `price` in `OrderItem` is a **snapshot** of the product price at the time of order. If the product price changes later, old orders are unaffected.
 
-| Method | URL | Auth Required | What it does |
-|---|---|---|---|
-| `POST` | `/api/orders` | ✅ | Create a new order |
-| `GET` | `/api/orders` | ✅ | Get my orders |
-| `GET` | `/api/orders/:id` | ✅ | Get single order |
+### NPM Dependencies
+
+| Package | Purpose |
+|---|---|
+| `express` | HTTP REST API server |
+| `@grpc/grpc-js` | gRPC (server + client) |
+| `@grpc/proto-loader` | Load `.proto` files at runtime |
+| `amqplib` | RabbitMQ client (publish events) |
+| `@prisma/client` | Type-safe database ORM |
+| `express-rate-limit` | Rate limiting (300 req/min — write-heavy) |
+| `cors` | Enable cross-origin requests |
+| `dotenv` | Load `.env` environment variables |
 
 ---
 
-## 🐇 RabbitMQ — Async Messaging
+## 8. Shared Infrastructure
 
-### Why Not Just Use gRPC for Everything?
+### Redis (ioredis)
 
-After placing an order, we need to decrement stock. But:
-- The user **shouldn't have to wait** for the stock update before getting their order confirmation
-- If product-service is temporarily down, the stock update should **retry later**, not fail the order
+Both `auth-service` and `product-service` use Redis as a **read-through cache**.
 
-### Solution: Event-Driven with RabbitMQ
-
-```
-SYNCHRONOUS (gRPC) — used when you need an IMMEDIATE answer:
-  order-service ──ValidateToken──► auth-service    "Is this user valid?"
-  order-service ──GetProduct─────► product-service "Does this product exist?"
-
-ASYNCHRONOUS (RabbitMQ) — used when you DON'T need to wait:
-  order-service ──publish──► [order.created queue] ──► product-service
-```
-
-### Message Flow
-
-```
-Order Service                              Product Service
-     │                                           │
-     │── publish "order.created" ──────────────► │
-     │   { orderId, items }                      │ (separate process)
-     │                                           ▼
-     │                              consume message from queue
-     │                              for each item:
-     │                                decrementProductStock(id, qty)
-     │                                invalidate Redis cache
-     │                              ack message (mark as done)
-     ▼
-Return order to user immediately ✅
-```
-
-### Queue Configuration
+**Singleton pattern** — one connection per service, reused everywhere:
 
 ```typescript
-// Publisher (order-service)
-channel.assertQueue('order.created', { durable: true });   // survives restart
-channel.sendToQueue('order.created', Buffer.from(JSON.stringify(data)), {
-  persistent: true,                                         // survives broker restart
-});
+let redis: Redis | null = null;
 
-// Consumer (product-service)
-channel.assertQueue('order.created', { durable: true });
-channel.consume('order.created', async (msg) => {
-  // process message...
-  channel.ack(msg);  // tell RabbitMQ: done, remove from queue
-});
+export const getRedisClient = (): Redis => {
+  if (!redis) {
+    redis = new Redis({
+      host: process.env.REDIS_HOST || 'localhost',
+      port: Number(process.env.REDIS_PORT) || 6379,
+      retryStrategy: (times) => Math.min(times * 100, 3000), // exponential backoff
+      lazyConnect: true,        // don't connect until first use
+      maxRetriesPerRequest: 3,  // fail fast on errors
+    });
+  }
+  return redis;
+};
 ```
 
----
+**All cache keys:**
 
-## 🗃️ Redis — Caching Layer
-
-Redis sits between all services and their databases to avoid redundant DB queries.
-
-### Cache Strategy
-
-| Service | Cache Key | TTL | When Invalidated |
+| Key Pattern | Service | TTL | Content |
 |---|---|---|---|
-| auth-service | `user:<userId>` | 5 min | Never (expires naturally) |
-| product-service | `product:<id>` | 10 min | On update, delete, or stock change |
-| product-service | `products:list:<query>` | 1 min | On any create/update/delete/order |
+| `user:<userId>` | auth | 300s | `{ id, email, role }` |
+| `product:<id>` | product | 600s | Full product object |
+| `products:list:<query>` | product | 60s | `{ success, count, data: [...] }` |
 
-### Cache Flow (Read-Through Pattern)
+### Proto Files (Shared via Docker Volume)
 
-```
-Request for product X
-        │
-        ▼
-  Redis GET "product:X"
-        │
-    HIT ▼ ────────────────────────────► Return cached data (fast ⚡)
-        │ MISS
-        ▼
-  PostgreSQL query
-        │
-        ▼
-  Redis SETEX "product:X" 600 <json>   ← store for next time
-        │
-        ▼
-  Return data
-```
-
----
-
-## 🐳 Docker Setup
-
-Everything runs as containers via `docker-compose.yml`.
-
-### Services
-
-```
-rabbitmq:        :5672  (broker)   :15672 (management UI)
-redis:           :6379
-auth-db:         :5433  (PostgreSQL)
-product-db:      :5435  (PostgreSQL)
-order-db:        :5434  (PostgreSQL)
-auth-service:    :3001  (REST)     :50051 (gRPC)
-product-service: :3002  (REST)     :50052 (gRPC)
-order-service:   :3003  (REST)     :50053 (gRPC)
-```
-
-### Startup Order (depends_on with health checks)
-
-```
-rabbitmq ──healthy──►┐
-redis    ──healthy──►├──► product-service ──healthy──►┐
-product-db──healthy──►┘                               ├──► order-service
-auth-db  ──healthy──►┐                               │
-redis    ──healthy──►├──► auth-service  ──healthy──►──┘
-                     │
-order-db ──healthy──►┘──► order-service
-```
-
-### Shared Proto Volume
+All three `.proto` files are in `/protos/` and mounted into every container:
 
 ```yaml
+# docker-compose.yml
 volumes:
-  - ./protos:/usr/src/app/protos   # all services mount the same proto files
+  - ./protos:/usr/src/app/protos
 ```
 
-This ensures all services always use the **same version** of the contract.
-
----
-
-## 🔄 Full Request Lifecycle: "Place an Order"
+This ensures all services use the **exact same contract** — no version mismatch.
 
 ```
-User sends:
-  POST http://localhost:3003/api/orders
-  Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-  {
-    "items": [
-      { "productId": "clx123abc", "quantity": 2 }
-    ]
-  }
+protos/
+├── auth.proto      → AuthService { ValidateToken }
+├── product.proto   → ProductService { GetProduct }
+└── order.proto     → OrderService { GetOrder, GetOrdersByUser }
+```
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### Error Handling (errorHandler.ts)
 
-STEP 1: order-service (Express) receives POST /api/orders
+All services share the same error handler pattern:
 
-STEP 2: authMiddleware runs
-  → Extracts token from "Authorization: Bearer ..." header
-
-STEP 3: gRPC call → auth-service:50051
-  → authClient.ValidateToken({ token: "eyJ..." })
-  ← Response: { valid: true, userId: "clx_user_456" }
-  → req.user = { id: "clx_user_456" }
-
-STEP 4: orderController.createOrder() called
-  → userId = req.user.id
-  → items  = [{ productId: "clx123abc", quantity: 2 }]
-
-STEP 5: For each item — gRPC call → product-service:50052
-  → productClient.GetProduct({ productId: "clx123abc" })
-  ← Response: { success: true, name: "Laptop", price: 999.99, stock: 10 }
-
-STEP 6: Validation
-  → stock (10) >= quantity (2)? ✅
-  → totalAmount = 999.99 × 2 = 1999.98
-
-STEP 7: Save to order-db (PostgreSQL via Prisma)
-  → Order { userId, totalAmount: 1999.98, status: "COMPLETED" }
-  → OrderItem { productId, quantity: 2, price: 999.99 }
-
-STEP 8: Publish to RabbitMQ
-  → queue: "order.created"
-  → payload: { orderId: "clx_order_789", items: [...] }
-
-STEP 9: Return to user ✅
-  {
-    "success": true,
-    "data": {
-      "id": "clx_order_789",
-      "totalAmount": 1999.98,
-      "status": "COMPLETED",
-      "items": [...]
-    }
-  }
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-STEP 10 (async — happens separately):
-  product-service RabbitMQ consumer wakes up
-  → decrementProductStock("clx123abc", 2)
-  → stock: 10 → 8
-  → Redis cache for "product:clx123abc" deleted
+```typescript
+const errorHandler = (err: Error, req, res, next): void => {
+  const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+  console.error(`[Error] ${err.message}`);
+  res.status(statusCode).json({
+    success: false,
+    error: err.message || 'Internal Server Error',
+  });
+};
+// Registered last: app.use(errorHandler)
 ```
 
 ---
 
-## 📁 Full File Map
+## 9. Docker & Deployment
+
+### Container Map
 
 ```
-Ecommarce-Microservice/
-│
-├── protos/                                ← Shared gRPC contracts
-│   ├── auth.proto                         │   AuthService.ValidateToken
-│   ├── product.proto                      │   ProductService.GetProduct
-│   └── order.proto                        │   OrderService.GetOrder / GetOrdersByUser
-│
-├── docker-compose.yml                     ← Wires all containers together
-├── PROJECT_REVIEW.md                      ← This file
-│
-├── auth-service/
-│   ├── Dockerfile
-│   ├── prisma/schema.prisma               ← User model (id, email, password, role)
-│   └── src/
-│       ├── server.ts                      ← Starts Express + gRPC
-│       ├── grpc/
-│       │   └── authServer.ts              ← gRPC SERVER on :50051
-│       ├── services/
-│       │   └── authService.ts             ← JWT verify + bcrypt + Redis cache
-│       ├── controllers/
-│       │   └── authController.ts          ← REST request handlers
-│       ├── routes/
-│       │   └── authRoutes.ts              ← POST /register, /login
-│       ├── middlewares/
-│       │   ├── authMiddleware.ts          ← Protect REST routes with JWT
-│       │   └── errorHandler.ts
-│       └── utils/
-│           └── redisClient.ts             ← Redis connection singleton
-│
-├── product-service/
-│   ├── Dockerfile
-│   ├── prisma/schema.prisma               ← Product model
-│   └── src/
-│       ├── server.ts                      ← Starts Express + gRPC + RabbitMQ
-│       ├── grpc/
-│       │   └── productServer.ts           ← gRPC SERVER on :50052
-│       ├── services/
-│       │   └── productService.ts          ← CRUD + Redis cache logic
-│       ├── events/
-│       │   └── rabbitmq.ts                ← CONSUMER of "order.created"
-│       ├── controllers/
-│       │   └── productController.ts
-│       ├── routes/
-│       │   └── productRoutes.ts           ← GET/POST/PUT/DELETE /products
-│       ├── middlewares/
-│       │   ├── authMiddleware.ts
-│       │   └── errorHandler.ts
-│       └── utils/
-│           ├── redisClient.ts
-│           └── prismaClient.ts
-│
-└── order-service/
-    ├── Dockerfile
-    ├── prisma/schema.prisma               ← Order + OrderItem models
-    └── src/
-        ├── server.ts                      ← Starts Express + gRPC + RabbitMQ
-        ├── grpc/
-        │   ├── orderServer.ts             ← gRPC SERVER on :50053
-        │   └── grpcClients.ts             ← gRPC CLIENTS → auth + product
-        ├── services/
-        │   └── orderService.ts            ← createOrder (gRPC calls + DB + MQ)
-        ├── events/
-        │   └── rabbitmq.ts                ← PUBLISHER to "order.created"
-        ├── controllers/
-        │   └── orderController.ts
-        ├── routes/
-        │   └── orderRoutes.ts             ← POST /orders, GET /orders/:id
-        ├── middlewares/
-        │   ├── authMiddleware.ts          ← calls auth-service via gRPC
-        │   └── errorHandler.ts
-        └── types/
-            └── express.d.ts               ← Adds req.user type extension
+Container           Image                   Ports
+─────────────────────────────────────────────────────────
+rabbitmq            rabbitmq:3-management   5672, 15672
+redis               redis:7-alpine          6379
+auth-db             postgres:15-alpine      5433→5432
+product-db          postgres:15-alpine      5435→5432
+order-db            postgres:15-alpine      5434→5432
+auth-service        ./auth-service          3001, 50051
+product-service     ./product-service       3002, 50052
+order-service       ./order-service         3003, 50053
 ```
 
----
+### Startup Order
 
-## ✅ Key Patterns to Remember
+Docker Compose waits for health checks before starting dependent services:
 
-| Pattern | Where | Why |
-|---|---|---|
-| **gRPC Server** | auth, product, order | Expose internal functions to other services |
-| **gRPC Client** | order → auth, order → product | Call another service's function directly |
-| **Proto file** | `/protos/` (shared) | Contract both caller & server agree on |
-| **Read-through cache** | auth + product | Check Redis → miss → DB → store in Redis |
-| **Cache invalidation** | product on update/delete | Keep cached data fresh |
-| **RabbitMQ publish** | order-service | Fire event after order, don't wait |
-| **RabbitMQ consume** | product-service | React to orders, update stock async |
-| **Prisma ORM** | all 3 services | Type-safe PostgreSQL queries |
-| **JWT + bcrypt** | auth-service | Secure user auth (hash passwords) |
-| **Rate limiting** | all 3 servers | Protect against brute force / overload |
-| **Health checks** | all services | Docker knows when service is ready |
-| **Separate DBs** | each service | Microservice data isolation principle |
+```
+Step 1: auth-db, order-db, product-db, redis, rabbitmq
+         (all start in parallel, each with health checks)
 
----
+Step 2: auth-service
+         (waits for: auth-db ✅ + redis ✅)
 
-## 🔐 Security Features
+Step 3: product-service
+         (waits for: product-db ✅ + rabbitmq ✅ + redis ✅ + auth-service ✅)
 
-| Feature | Where | Details |
-|---|---|---|
-| Password hashing | auth-service | bcrypt with salt rounds = 10 |
-| JWT tokens | auth-service | Expires in 1 day |
-| Rate limiting (auth) | auth-service | 20 requests / 15 minutes |
-| Rate limiting (global) | all services | 300–1000 req/min depending on service |
-| Token validation | order + product | Every request goes through gRPC auth check |
-| No plain text passwords | auth-service | Password stripped before caching in Redis |
+Step 4: order-service
+         (waits for: order-db ✅ + rabbitmq ✅ + redis ✅ + auth-service ✅ + product-service ✅)
+```
 
----
+### Environment Variables
 
-## 🚀 How to Run
+**auth-service:**
+```env
+PORT=3001
+GRPC_PORT=50051
+DATABASE_URL=postgresql://auth_user:auth_password@auth-db:5432/auth_db
+JWT_SECRET=supersecret123_change_in_production
+REDIS_HOST=redis
+REDIS_PORT=6379
+```
+
+**product-service:**
+```env
+PORT=3002
+GRPC_PORT=50052
+DATABASE_URL=postgresql://product_user:product_password@product-db:5432/product_db
+RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+AUTH_GRPC_URL=auth-service:50051
+REDIS_HOST=redis
+REDIS_PORT=6379
+```
+
+**order-service:**
+```env
+PORT=3003
+GRPC_PORT=50053
+DATABASE_URL=postgresql://order_user:order_password@order-db:5432/order_db
+RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+AUTH_GRPC_URL=auth-service:50051
+PRODUCT_GRPC_URL=product-service:50052
+REDIS_HOST=redis
+REDIS_PORT=6379
+```
+
+### Run the Project
 
 ```bash
-# Start everything with Docker Compose
+# Start all services
 docker-compose up --build
 
-# Access points:
-# Auth REST API:     http://localhost:3001/api/auth
-# Product REST API:  http://localhost:3002/api/products
-# Order REST API:    http://localhost:3003/api/orders
-# RabbitMQ UI:       http://localhost:15672  (user / password)
-# Redis:             localhost:6379
+# Stop all services
+docker-compose down
+
+# Rebuild a specific service
+docker-compose up --build auth-service
+
+# View logs for a specific service
+docker-compose logs -f order-service
+
+# Access RabbitMQ management UI
+open http://localhost:15672  # login: user / password
 ```
 
 ---
 
-*Generated: September 2026 | Stack: TypeScript · Node.js · gRPC · PostgreSQL · Redis · RabbitMQ · Docker*
+## 10. Full Lifecycle — Place an Order
+
+This traces every single step when a user places an order.
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REQUEST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+POST http://localhost:3003/api/orders
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJpZCI6ImNseF91c2VyIn0.abc
+Content-Type: application/json
+
+{
+  "items": [
+    { "productId": "clx_prod_laptop", "quantity": 1 },
+    { "productId": "clx_prod_mouse", "quantity": 2 }
+  ]
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — order-service receives request
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Rate limiter: 300/min — OK ✅
+Route match: POST /api/orders → [protect, createOrder]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — authMiddleware.protect()
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Token extracted: "eyJhbGciOiJIUzI1NiJ9..."
+
+gRPC call → auth-service:50051
+  Request:  ValidateToken({ token: "eyJ..." })
+  auth-service internally:
+    → jwt.verify(token) → decoded: { id: "clx_user_456" }
+    → Redis GET "user:clx_user_456" → HIT! (cached)
+    → return { valid: true, userId: "clx_user_456", error: "" }
+  Response: { valid: true, userId: "clx_user_456" }
+
+req.user = { id: "clx_user_456" }
+next() called → go to controller
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — orderController.createOrder()
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+items = [{ productId: "clx_prod_laptop", quantity: 1 }, ...]
+userId = "clx_user_456"
+Call orderService.createOrder(userId, items)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4 — orderService.createOrder() — Item 1
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+gRPC call → product-service:50052
+  Request:  GetProduct({ productId: "clx_prod_laptop" })
+  product-service internally:
+    → Redis GET "product:clx_prod_laptop" → MISS
+    → prisma.product.findUnique({ where: { id: "clx_prod_laptop" } })
+    → Returns: { name: "Laptop Pro", price: 1299.99, stock: 5 }
+    → Redis SETEX "product:clx_prod_laptop" 600 <json>
+    → return { success: true, name: "Laptop Pro", price: 1299.99, stock: 5 }
+  Response: { success: true, price: 1299.99, stock: 5 }
+
+Check: stock(5) >= quantity(1) ✅
+totalAmount += 1299.99 × 1 = 1299.99
+validatedItems.push({ productId, quantity: 1, price: 1299.99 })
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 5 — orderService.createOrder() — Item 2
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+gRPC call → product-service:50052
+  GetProduct({ productId: "clx_prod_mouse" })
+  → { success: true, name: "Wireless Mouse", price: 29.99, stock: 100 }
+
+Check: stock(100) >= quantity(2) ✅
+totalAmount += 29.99 × 2 = 59.98
+totalAmount = 1299.99 + 59.98 = 1359.97
+validatedItems.push({ productId, quantity: 2, price: 29.99 })
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 6 — Save order to database
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+prisma.order.create({
+  data: {
+    userId: "clx_user_456",
+    totalAmount: 1359.97,
+    status: "COMPLETED",
+    items: {
+      create: [
+        { productId: "clx_prod_laptop", quantity: 1, price: 1299.99 },
+        { productId: "clx_prod_mouse",  quantity: 2, price: 29.99   }
+      ]
+    }
+  }
+})
+→ order.id = "clx_order_abc123"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 7 — Publish event to RabbitMQ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+publishEvent('order.created', {
+  orderId: "clx_order_abc123",
+  items: [
+    { productId: "clx_prod_laptop", quantity: 1, price: 1299.99 },
+    { productId: "clx_prod_mouse",  quantity: 2, price: 29.99 }
+  ]
+})
+→ Message stored in RabbitMQ queue
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESPONSE (returned to user immediately) ✅
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HTTP 201 Created
+{
+  "success": true,
+  "data": {
+    "id": "clx_order_abc123",
+    "userId": "clx_user_456",
+    "totalAmount": 1359.97,
+    "status": "COMPLETED",
+    "items": [
+      { "productId": "clx_prod_laptop", "quantity": 1, "price": 1299.99 },
+      { "productId": "clx_prod_mouse",  "quantity": 2, "price": 29.99 }
+    ]
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 8 — Async: product-service processes event
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+(happens separately, user already got their response)
+
+RabbitMQ delivers message to product-service consumer:
+  For "clx_prod_laptop": stock 5 → 4, DELETE Redis "product:clx_prod_laptop"
+  For "clx_prod_mouse":  stock 100 → 98, DELETE Redis "product:clx_prod_mouse"
+  DELETE Redis keys matching "products:list:*"
+  channel.ack(msg) → message removed from queue ✅
+```
+
+---
+
+## 11. API Reference
+
+### Auth Service — Base URL: `http://localhost:3001`
+
+#### POST /api/auth/register
+```json
+// Request Body
+{ "email": "user@example.com", "password": "mypassword123" }
+
+// Response 201
+{ "success": true, "token": "eyJhbGci..." }
+
+// Response 400
+{ "success": false, "error": "User already exists" }
+```
+
+#### POST /api/auth/login
+```json
+// Request Body
+{ "email": "user@example.com", "password": "mypassword123" }
+
+// Response 200
+{ "success": true, "token": "eyJhbGci..." }
+
+// Response 401
+{ "success": false, "error": "Invalid credentials" }
+```
+
+#### GET /api/auth/me
+```
+Headers: Authorization: Bearer <token>
+
+// Response 200
+{ "success": true, "data": { "id": "clx...", "email": "...", "role": "USER" } }
+```
+
+---
+
+### Product Service — Base URL: `http://localhost:3002`
+
+#### GET /api/products
+```
+// Optional query params: page, limit, search, category, minPrice, maxPrice, sort
+
+// Response 200
+{
+  "success": true,
+  "count": 3,
+  "data": [
+    { "id": "clx...", "name": "Laptop", "price": 999.99, "stock": 10, ... }
+  ]
+}
+```
+
+#### GET /api/products/:id
+```json
+// Response 200
+{ "success": true, "data": { "id": "clx...", "name": "Laptop", "price": 999.99 } }
+
+// Response 404
+{ "success": false, "error": "Product not found" }
+```
+
+#### POST /api/products
+```
+Headers: Authorization: Bearer <token>
+Body: { "name": "Laptop", "price": 999.99, "stock": 10, "category": "electronics" }
+
+// Response 201
+{ "success": true, "data": { "id": "clx...", ... } }
+```
+
+#### PUT /api/products/:id
+```
+Headers: Authorization: Bearer <token>
+Body: { "price": 899.99, "stock": 15 }
+
+// Response 200
+{ "success": true, "data": { "id": "clx...", "price": 899.99, ... } }
+```
+
+#### DELETE /api/products/:id
+```
+Headers: Authorization: Bearer <token>
+
+// Response 200
+{ "success": true, "data": {} }
+```
+
+---
+
+### Order Service — Base URL: `http://localhost:3003`
+
+#### POST /api/orders
+```
+Headers: Authorization: Bearer <token>
+Body:
+{
+  "items": [
+    { "productId": "clx...", "quantity": 2 },
+    { "productId": "clx...", "quantity": 1 }
+  ]
+}
+
+// Response 201
+{
+  "success": true,
+  "data": {
+    "id": "clx_order...",
+    "userId": "clx_user...",
+    "totalAmount": 1359.97,
+    "status": "COMPLETED",
+    "items": [ ... ]
+  }
+}
+
+// Response 400
+{ "success": false, "error": "Insufficient stock for product Laptop" }
+```
+
+#### GET /api/orders
+```
+Headers: Authorization: Bearer <token>
+
+// Response 200
+{ "success": true, "count": 3, "data": [ { "id": "...", ... } ] }
+```
+
+#### GET /api/orders/:id
+```
+Headers: Authorization: Bearer <token>
+
+// Response 200
+{ "success": true, "data": { "id": "...", "items": [...] } }
+
+// Response 404 (or not owned by user)
+{ "success": false, "error": "Order not found" }
+```
+
+---
+
+## 12. Dependencies
+
+### Shared across all services
+
+| Package | Version | Purpose |
+|---|---|---|
+| `express` | ^5.2.1 | HTTP web server |
+| `@grpc/grpc-js` | ^1.14.4 | gRPC implementation for Node.js |
+| `@grpc/proto-loader` | ^0.8.1 | Load `.proto` files dynamically at runtime |
+| `@prisma/client` | ^6.4.0 | Type-safe PostgreSQL ORM |
+| `cors` | ^2.8.6 | Enable cross-origin HTTP requests |
+| `dotenv` | ^17.4.2 | Load environment variables from `.env` |
+| `express-rate-limit` | ^7.5.0 | Rate limiting middleware |
+| `typescript` | ^5.8.3 | Type-safe JavaScript |
+| `ts-node` | ^10.9.2 | Run TypeScript directly without build step |
+| `nodemon` | ^3.1.10 | Auto-restart on file changes (dev) |
+| `prisma` | ^6.4.0 | Database migrations and schema generation |
+
+### auth-service only
+
+| Package | Purpose |
+|---|---|
+| `jsonwebtoken` | Create and verify JWT tokens |
+| `bcryptjs` | Securely hash passwords |
+| `ioredis` | Redis client (Node.js) |
+
+### product-service only
+
+| Package | Purpose |
+|---|---|
+| `amqplib` | AMQP client to connect to RabbitMQ |
+| `ioredis` | Redis client (Node.js) |
+
+### order-service only
+
+| Package | Purpose |
+|---|---|
+| `amqplib` | AMQP client to connect to RabbitMQ |
+
+---
+
+*Last updated: September 2026 | Stack: TypeScript · Node.js · Express · gRPC · Prisma · PostgreSQL · Redis · RabbitMQ · Docker*
