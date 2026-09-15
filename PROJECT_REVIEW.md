@@ -30,17 +30,17 @@ This is a **production-style e-commerce backend** built with a **microservices a
 
 ### The 3 Services
 
-| Service | Port (REST) | Port (gRPC) | Database | Role |
-|---|---|---|---|---|
-| `auth-service` | `:3001` | `:50051` | `auth-db` (PostgreSQL) | User registration, login, JWT token validation |
-| `product-service` | `:3002` | `:50052` | `product-db` (PostgreSQL) | Product CRUD, stock management |
-| `order-service` | `:3003` | `:50053` | `order-db` (PostgreSQL) | Order creation and retrieval |
+| Service           | Port (REST) | Port (gRPC) | Database                  | Role                                           |
+| ----------------- | ----------- | ----------- | ------------------------- | ---------------------------------------------- |
+| `auth-service`    | `:3001`     | `:50051`    | `auth-db` (PostgreSQL)    | User registration, login, JWT token validation |
+| `product-service` | `:3002`     | `:50052`    | `product-db` (PostgreSQL) | Product CRUD, stock management                 |
+| `order-service`   | `:3003`     | `:50053`    | `order-db` (PostgreSQL)   | Order creation and retrieval                   |
 
 ### Shared Infrastructure
 
-| Component | Port | Role |
-|---|---|---|
-| **Redis** | `:6379` | In-memory cache (users, products) |
+| Component    | Port               | Role                                |
+| ------------ | ------------------ | ----------------------------------- |
+| **Redis**    | `:6379`            | In-memory cache (users, products)   |
 | **RabbitMQ** | `:5672` / `:15672` | Async message broker (order events) |
 
 ---
@@ -69,27 +69,27 @@ This is a **production-style e-commerce backend** built with a **microservices a
 │                   │  │  :50052          │  │  GetOrdersByUser     │
 │                   │  │  GetProduct      │  │                      │
 └────────┬──────────┘  └──────────────────┘  └──────┬──┬────────────┘
-         │                       ▲                   │  │
-         │                       │ gRPC GetProduct    │  │
-         │                       └───────────────────┘  │
-         │                                              │
-         │◄──── gRPC ValidateToken ─────────────────────┘
+         │                       ▲                  │  │
+         │                       │ gRPC GetProduct  │  │
+         │                       └──────────────────┘  │
+         │                                             │
+         │◄──── gRPC ValidateToken ────────────────────┘
          │
 ┌────────▼─────────┐   ┌───────────────────┐   ┌──────────────────────┐
-│    auth-db       │   │   product-db       │   │     order-db         │
-│  (PostgreSQL)    │   │   (PostgreSQL)     │   │   (PostgreSQL)       │
-│  :5433           │   │   :5435            │   │   :5434              │
-│  users table     │   │   products table   │   │   orders table       │
+│    auth-db       │   │   product-db      │   │     order-db         │
+│  (PostgreSQL)    │   │   (PostgreSQL)    │   │   (PostgreSQL)       │
+│  :5433           │   │   :5435           │   │   :5434              │
+│  users table     │   │   products table  │   │   orders table       │
 └──────────────────┘   └───────────────────┘   └──────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        REDIS   :6379                                │
-│       auth: "user:<id>" TTL 5m     product: "product:<id>" TTL 10m │
+│       auth: "user:<id>" TTL 5m     product: "product:<id>" TTL 10m  │
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     RABBITMQ   :5672                                │
-│   order-service ──PUBLISH──► [order.created] ──CONSUME──► product  │
+│   order-service ──PUBLISH──► [order.created] ──CONSUME──► product   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -156,6 +156,7 @@ ORDER-SERVICE                          PRODUCT-SERVICE
 - Used by: Services talking to each other
 
 **Why not use REST between services?**
+
 > gRPC is faster (binary vs text), has enforced contracts (`.proto`), supports streaming, and uses HTTP/2 which allows multiplexing.
 
 ---
@@ -197,6 +198,7 @@ RabbitMQ is a **Message Broker** — it's like a **post office** between service
 ### Core Concepts
 
 #### Queue
+
 A named buffer that stores messages until a consumer is ready to process them.
 
 ```
@@ -208,32 +210,37 @@ A named buffer that stores messages until a consumer is ready to process them.
 ```
 
 #### Publisher
+
 Sends a message to a queue. It does NOT know or care about the consumer.
 
 ```typescript
 // order-service/src/events/rabbitmq.ts
-export const publishEvent = async (queue: string, data: unknown): Promise<void> => {
+export const publishEvent = async (
+  queue: string,
+  data: unknown,
+): Promise<void> => {
   await channel.assertQueue(queue, { durable: true }); // create queue if not exists
   channel.sendToQueue(
     queue,
     Buffer.from(JSON.stringify(data)), // convert to binary
-    { persistent: true }               // survive RabbitMQ restart
+    { persistent: true }, // survive RabbitMQ restart
   );
 };
 
 // Called like this after saving an order:
-await publishEvent('order.created', {
+await publishEvent("order.created", {
   orderId: order.id,
-  items: [{ productId: 'abc', quantity: 2 }]
+  items: [{ productId: "abc", quantity: 2 }],
 });
 ```
 
 #### Consumer
+
 Listens to a queue and processes each message one-by-one.
 
 ```typescript
 // product-service/src/events/rabbitmq.ts
-await channel.consume('order.created', async (msg) => {
+await channel.consume("order.created", async (msg) => {
   if (msg !== null) {
     const event = JSON.parse(msg.content.toString()); // decode JSON
     // { orderId: "x", items: [{ productId, quantity }] }
@@ -248,17 +255,20 @@ await channel.consume('order.created', async (msg) => {
 ```
 
 #### Acknowledgement (ack)
+
 When a consumer calls `channel.ack(msg)`, it tells RabbitMQ:
+
 > "I successfully processed this message. You can safely delete it."
 
 If the consumer crashes **before acking**, RabbitMQ re-queues the message and delivers it again. This ensures **no messages are lost**.
 
 #### Durability
+
 Both the queue and the messages are marked as **durable/persistent**:
 
 ```typescript
-channel.assertQueue('order.created', { durable: true });   // queue survives RabbitMQ restart
-channel.sendToQueue('order.created', data, { persistent: true }); // message survives too
+channel.assertQueue("order.created", { durable: true }); // queue survives RabbitMQ restart
+channel.sendToQueue("order.created", data, { persistent: true }); // message survives too
 ```
 
 ### The Full Message Lifecycle in This Project
@@ -294,9 +304,9 @@ channel.sendToQueue('order.created', data, { persistent: true }); // message sur
 
 ### Why Not Use gRPC for Stock Decrement?
 
-| Approach | Problem |
-|---|---|
-| gRPC (sync) | Order creation would be **blocked** waiting for stock update. If product-service is slow, the user waits longer. |
+| Approach         | Problem                                                                                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| gRPC (sync)      | Order creation would be **blocked** waiting for stock update. If product-service is slow, the user waits longer.                                                          |
 | RabbitMQ (async) | Order returns immediately. Stock update happens in background. If product-service is down, the message **waits in the queue** and is processed when it comes back online. |
 
 ### RabbitMQ Connection with Auto-Retry
@@ -308,9 +318,9 @@ export const connectRabbitMQ = async (): Promise<void> => {
   try {
     const connection = await amqp.connect(process.env.RABBITMQ_URL);
     channel = await connection.createChannel();
-    console.log('RabbitMQ Connected');
+    console.log("RabbitMQ Connected");
   } catch (err) {
-    console.error('RabbitMQ failed, retrying in 5s...');
+    console.error("RabbitMQ failed, retrying in 5s...");
     setTimeout(() => void connectRabbitMQ(), 5000); // retry after 5 seconds
   }
 };
@@ -323,6 +333,7 @@ export const connectRabbitMQ = async (): Promise<void> => {
 **Directory:** `auth-service/`
 
 ### What It Does
+
 The auth-service is the **identity provider** of the system. Every service that needs to know "who is this user?" asks auth-service via gRPC.
 
 ### Internal Architecture
@@ -428,9 +439,9 @@ export const validateToken = async (token: string) => {
   // Step 1: Verify the JWT signature and expiry
   let decoded: any;
   try {
-    decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecret123');
+    decoded = jwt.verify(token, process.env.JWT_SECRET || "supersecret123");
   } catch {
-    return { valid: false, userId: '', error: 'Invalid token' };
+    return { valid: false, userId: "", error: "Invalid token" };
   }
 
   const userId = decoded.id;
@@ -439,32 +450,38 @@ export const validateToken = async (token: string) => {
   const redis = getRedisClient();
   const cachedUser = await redis.get(`user:${userId}`);
   if (cachedUser) {
-    return { valid: true, userId, error: '' }; // ← cache HIT, return immediately
+    return { valid: true, userId, error: "" }; // ← cache HIT, return immediately
   }
 
   // Step 3: Cache MISS — query the database
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
-    return { valid: false, userId: '', error: 'User not found' };
+    return { valid: false, userId: "", error: "User not found" };
   }
 
   // Step 4: Store in Redis for next time (5 min TTL)
-  await redis.setex(`user:${userId}`, 300, JSON.stringify({
-    id: user.id, email: user.email, role: user.role
-  }));
+  await redis.setex(
+    `user:${userId}`,
+    300,
+    JSON.stringify({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    }),
+  );
 
-  return { valid: true, userId: user.id, error: '' };
+  return { valid: true, userId: user.id, error: "" };
 };
 ```
 
 ### REST API Endpoints
 
-| Method | Path | Auth Required | Controller | Description |
-|---|---|---|---|---|
-| `POST` | `/api/auth/register` | ❌ No | `register()` | Create account, returns JWT |
-| `POST` | `/api/auth/login` | ❌ No | `login()` | Login, returns JWT |
-| `GET` | `/api/auth/me` | ✅ Yes (local JWT) | `getMe()` | Get current user profile |
-| `GET` | `/health` | ❌ No | inline | Docker health check |
+| Method | Path                 | Auth Required      | Controller   | Description                 |
+| ------ | -------------------- | ------------------ | ------------ | --------------------------- |
+| `POST` | `/api/auth/register` | ❌ No              | `register()` | Create account, returns JWT |
+| `POST` | `/api/auth/login`    | ❌ No              | `login()`    | Login, returns JWT          |
+| `GET`  | `/api/auth/me`       | ✅ Yes (local JWT) | `getMe()`    | Get current user profile    |
+| `GET`  | `/health`            | ❌ No              | inline       | Docker health check         |
 
 > **Note:** The `/me` endpoint in auth-service uses **local JWT verification** (not gRPC) because it's internal to auth-service itself.
 
@@ -498,18 +515,18 @@ model User {
 
 ### NPM Dependencies
 
-| Package | Purpose |
-|---|---|
-| `express` | HTTP REST API server |
-| `@grpc/grpc-js` | gRPC server implementation |
-| `@grpc/proto-loader` | Load `.proto` files at runtime |
-| `jsonwebtoken` | Create and verify JWT tokens |
-| `bcryptjs` | Hash passwords securely |
-| `ioredis` | Redis client |
-| `@prisma/client` | Type-safe database ORM |
-| `express-rate-limit` | Rate limiting middleware |
-| `cors` | Enable cross-origin requests |
-| `dotenv` | Load `.env` environment variables |
+| Package              | Purpose                           |
+| -------------------- | --------------------------------- |
+| `express`            | HTTP REST API server              |
+| `@grpc/grpc-js`      | gRPC server implementation        |
+| `@grpc/proto-loader` | Load `.proto` files at runtime    |
+| `jsonwebtoken`       | Create and verify JWT tokens      |
+| `bcryptjs`           | Hash passwords securely           |
+| `ioredis`            | Redis client                      |
+| `@prisma/client`     | Type-safe database ORM            |
+| `express-rate-limit` | Rate limiting middleware          |
+| `cors`               | Enable cross-origin requests      |
+| `dotenv`             | Load `.env` environment variables |
 
 ---
 
@@ -518,7 +535,9 @@ model User {
 **Directory:** `product-service/`
 
 ### What It Does
+
 The product-service manages the product catalog. It is the **only source of truth for product data**. It exposes:
+
 - A **REST API** for CRUD operations
 - A **gRPC server** so order-service can look up product prices and stock
 - A **RabbitMQ consumer** to decrement stock when orders are placed
@@ -650,7 +669,7 @@ server.bindAsync('0.0.0.0:50052', grpc.ServerCredentials.createInsecure(), ...);
 export const connectRabbitMQ = async (): Promise<void> => {
   const connection = await amqp.connect(process.env.RABBITMQ_URL);
   channel = await connection.createChannel();
-  const queue = 'order.created';
+  const queue = "order.created";
 
   // Declare the queue (idempotent — safe to call multiple times)
   await channel.assertQueue(queue, { durable: true });
@@ -665,14 +684,17 @@ export const connectRabbitMQ = async (): Promise<void> => {
 
         // For each item in the order, reduce stock
         for (const item of event.items) {
-          await productService.decrementProductStock(item.productId, item.quantity);
+          await productService.decrementProductStock(
+            item.productId,
+            item.quantity,
+          );
           // This does: UPDATE products SET stock = stock - 2 WHERE id = "y"
           // And deletes Redis cache: DEL "product:y"
         }
 
         // Invalidate all list caches (stock count changed)
         const redis = getRedisClient();
-        const listKeys = await redis.keys('products:list:*');
+        const listKeys = await redis.keys("products:list:*");
         if (listKeys.length > 0) await redis.del(...listKeys);
 
         channel.ack(msg); // ✅ Mark as processed
@@ -686,26 +708,26 @@ export const connectRabbitMQ = async (): Promise<void> => {
 
 ### REST API Endpoints
 
-| Method | Path | Auth Required | Description |
-|---|---|---|---|
-| `GET` | `/api/products` | ❌ No | List products (supports filters) |
-| `GET` | `/api/products/:id` | ❌ No | Get single product |
-| `POST` | `/api/products` | ✅ gRPC auth | Create product |
-| `PUT` | `/api/products/:id` | ✅ gRPC auth | Update product |
-| `DELETE` | `/api/products/:id` | ✅ gRPC auth | Delete product |
-| `GET` | `/health` | ❌ No | Docker health check |
+| Method   | Path                | Auth Required | Description                      |
+| -------- | ------------------- | ------------- | -------------------------------- |
+| `GET`    | `/api/products`     | ❌ No         | List products (supports filters) |
+| `GET`    | `/api/products/:id` | ❌ No         | Get single product               |
+| `POST`   | `/api/products`     | ✅ gRPC auth  | Create product                   |
+| `PUT`    | `/api/products/:id` | ✅ gRPC auth  | Update product                   |
+| `DELETE` | `/api/products/:id` | ✅ gRPC auth  | Delete product                   |
+| `GET`    | `/health`           | ❌ No         | Docker health check              |
 
 ### Query Filters for GET /api/products
 
-| Query Param | Type | Example | Description |
-|---|---|---|---|
-| `page` | number | `?page=2` | Page number (default: 1) |
-| `limit` | number | `?limit=20` | Items per page (default: 10) |
-| `search` | string | `?search=laptop` | Search in name & description |
-| `category` | string | `?category=electronics` | Filter by category |
-| `minPrice` | number | `?minPrice=50` | Minimum price |
-| `maxPrice` | number | `?maxPrice=500` | Maximum price |
-| `sort` | string | `?sort=price:asc` | Sort by field:direction |
+| Query Param | Type   | Example                 | Description                  |
+| ----------- | ------ | ----------------------- | ---------------------------- |
+| `page`      | number | `?page=2`               | Page number (default: 1)     |
+| `limit`     | number | `?limit=20`             | Items per page (default: 10) |
+| `search`    | string | `?search=laptop`        | Search in name & description |
+| `category`  | string | `?category=electronics` | Filter by category           |
+| `minPrice`  | number | `?minPrice=50`          | Minimum price                |
+| `maxPrice`  | number | `?maxPrice=500`         | Maximum price                |
+| `sort`      | string | `?sort=price:asc`       | Sort by field:direction      |
 
 ### Redis Caching Strategy
 
@@ -738,17 +760,17 @@ model Product {
 
 ### NPM Dependencies
 
-| Package | Purpose |
-|---|---|
-| `express` | HTTP REST API server |
-| `@grpc/grpc-js` | gRPC server implementation |
-| `@grpc/proto-loader` | Load `.proto` files at runtime |
-| `amqplib` | RabbitMQ client (AMQP protocol) |
-| `ioredis` | Redis client |
-| `@prisma/client` | Type-safe database ORM |
+| Package              | Purpose                                   |
+| -------------------- | ----------------------------------------- |
+| `express`            | HTTP REST API server                      |
+| `@grpc/grpc-js`      | gRPC server implementation                |
+| `@grpc/proto-loader` | Load `.proto` files at runtime            |
+| `amqplib`            | RabbitMQ client (AMQP protocol)           |
+| `ioredis`            | Redis client                              |
+| `@prisma/client`     | Type-safe database ORM                    |
 | `express-rate-limit` | Rate limiting (1000 req/min — read-heavy) |
-| `cors` | Enable cross-origin requests |
-| `dotenv` | Load `.env` environment variables |
+| `cors`               | Enable cross-origin requests              |
+| `dotenv`             | Load `.env` environment variables         |
 
 ---
 
@@ -757,7 +779,9 @@ model Product {
 **Directory:** `order-service/`
 
 ### What It Does
+
 The order-service is the most **connected** service — it talks to every other component:
+
 - Calls **auth-service** via gRPC to verify the user's JWT on every request
 - Calls **product-service** via gRPC to get product details and validate stock
 - Saves orders to **order-db** (PostgreSQL)
@@ -908,16 +932,16 @@ export const getProductDetails = (productId: string): Promise<ProductResponse> =
 // This runs before EVERY order route handler
 export const protect = (req, res, next): void => {
   // Step 1: Get token
-  const token = req.headers.authorization?.split(' ')[1]; // "Bearer <token>" → "<token>"
+  const token = req.headers.authorization?.split(" ")[1]; // "Bearer <token>" → "<token>"
   if (!token) {
-    res.status(401).json({ error: 'Not authorized' });
+    res.status(401).json({ error: "Not authorized" });
     return;
   }
 
   // Step 2: Call auth-service via gRPC
   authClient.ValidateToken({ token }, (err, response) => {
     if (err || !response.valid) {
-      res.status(401).json({ error: response?.error || 'Not authorized' });
+      res.status(401).json({ error: response?.error || "Not authorized" });
       return;
     }
     // Step 3: Attach user info to request
@@ -970,12 +994,12 @@ server.bindAsync('0.0.0.0:50053', ...);
 
 ### REST API Endpoints
 
-| Method | Path | Auth Required | Description |
-|---|---|---|---|
-| `POST` | `/api/orders` | ✅ gRPC auth | Create a new order |
-| `GET` | `/api/orders` | ✅ gRPC auth | Get all orders for current user |
-| `GET` | `/api/orders/:id` | ✅ gRPC auth | Get specific order (must belong to user) |
-| `GET` | `/health` | ❌ No | Docker health check |
+| Method | Path              | Auth Required | Description                              |
+| ------ | ----------------- | ------------- | ---------------------------------------- |
+| `POST` | `/api/orders`     | ✅ gRPC auth  | Create a new order                       |
+| `GET`  | `/api/orders`     | ✅ gRPC auth  | Get all orders for current user          |
+| `GET`  | `/api/orders/:id` | ✅ gRPC auth  | Get specific order (must belong to user) |
+| `GET`  | `/health`         | ❌ No         | Docker health check                      |
 
 ### Security: Order Isolation
 
@@ -987,7 +1011,7 @@ export const getOrderByIdAndUser = async (orderId: string, userId: string) => {
   return await prisma.order.findFirst({
     where: {
       id: orderId,
-      userId,           // ← BOTH conditions must match
+      userId, // ← BOTH conditions must match
     },
     include: { items: true },
   });
@@ -1039,16 +1063,16 @@ model OrderItem {
 
 ### NPM Dependencies
 
-| Package | Purpose |
-|---|---|
-| `express` | HTTP REST API server |
-| `@grpc/grpc-js` | gRPC (server + client) |
-| `@grpc/proto-loader` | Load `.proto` files at runtime |
-| `amqplib` | RabbitMQ client (publish events) |
-| `@prisma/client` | Type-safe database ORM |
+| Package              | Purpose                                   |
+| -------------------- | ----------------------------------------- |
+| `express`            | HTTP REST API server                      |
+| `@grpc/grpc-js`      | gRPC (server + client)                    |
+| `@grpc/proto-loader` | Load `.proto` files at runtime            |
+| `amqplib`            | RabbitMQ client (publish events)          |
+| `@prisma/client`     | Type-safe database ORM                    |
 | `express-rate-limit` | Rate limiting (300 req/min — write-heavy) |
-| `cors` | Enable cross-origin requests |
-| `dotenv` | Load `.env` environment variables |
+| `cors`               | Enable cross-origin requests              |
+| `dotenv`             | Load `.env` environment variables         |
 
 ---
 
@@ -1066,11 +1090,11 @@ let redis: Redis | null = null;
 export const getRedisClient = (): Redis => {
   if (!redis) {
     redis = new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
+      host: process.env.REDIS_HOST || "localhost",
       port: Number(process.env.REDIS_PORT) || 6379,
       retryStrategy: (times) => Math.min(times * 100, 3000), // exponential backoff
-      lazyConnect: true,        // don't connect until first use
-      maxRetriesPerRequest: 3,  // fail fast on errors
+      lazyConnect: true, // don't connect until first use
+      maxRetriesPerRequest: 3, // fail fast on errors
     });
   }
   return redis;
@@ -1079,11 +1103,11 @@ export const getRedisClient = (): Redis => {
 
 **All cache keys:**
 
-| Key Pattern | Service | TTL | Content |
-|---|---|---|---|
-| `user:<userId>` | auth | 300s | `{ id, email, role }` |
-| `product:<id>` | product | 600s | Full product object |
-| `products:list:<query>` | product | 60s | `{ success, count, data: [...] }` |
+| Key Pattern             | Service | TTL  | Content                           |
+| ----------------------- | ------- | ---- | --------------------------------- |
+| `user:<userId>`         | auth    | 300s | `{ id, email, role }`             |
+| `product:<id>`          | product | 600s | Full product object               |
+| `products:list:<query>` | product | 60s  | `{ success, count, data: [...] }` |
 
 ### Proto Files (Shared via Docker Volume)
 
@@ -1114,7 +1138,7 @@ const errorHandler = (err: Error, req, res, next): void => {
   console.error(`[Error] ${err.message}`);
   res.status(statusCode).json({
     success: false,
-    error: err.message || 'Internal Server Error',
+    error: err.message || "Internal Server Error",
   });
 };
 // Registered last: app.use(errorHandler)
@@ -1160,6 +1184,7 @@ Step 4: order-service
 ### Environment Variables
 
 **auth-service:**
+
 ```env
 PORT=3001
 GRPC_PORT=50051
@@ -1170,6 +1195,7 @@ REDIS_PORT=6379
 ```
 
 **product-service:**
+
 ```env
 PORT=3002
 GRPC_PORT=50052
@@ -1181,6 +1207,7 @@ REDIS_PORT=6379
 ```
 
 **order-service:**
+
 ```env
 PORT=3003
 GRPC_PORT=50053
@@ -1357,6 +1384,7 @@ RabbitMQ delivers message to product-service consumer:
 ### Auth Service — Base URL: `http://localhost:3001`
 
 #### POST /api/auth/register
+
 ```json
 // Request Body
 { "email": "user@example.com", "password": "mypassword123" }
@@ -1369,6 +1397,7 @@ RabbitMQ delivers message to product-service consumer:
 ```
 
 #### POST /api/auth/login
+
 ```json
 // Request Body
 { "email": "user@example.com", "password": "mypassword123" }
@@ -1381,6 +1410,7 @@ RabbitMQ delivers message to product-service consumer:
 ```
 
 #### GET /api/auth/me
+
 ```
 Headers: Authorization: Bearer <token>
 
@@ -1393,6 +1423,7 @@ Headers: Authorization: Bearer <token>
 ### Product Service — Base URL: `http://localhost:3002`
 
 #### GET /api/products
+
 ```
 // Optional query params: page, limit, search, category, minPrice, maxPrice, sort
 
@@ -1407,6 +1438,7 @@ Headers: Authorization: Bearer <token>
 ```
 
 #### GET /api/products/:id
+
 ```json
 // Response 200
 { "success": true, "data": { "id": "clx...", "name": "Laptop", "price": 999.99 } }
@@ -1416,6 +1448,7 @@ Headers: Authorization: Bearer <token>
 ```
 
 #### POST /api/products
+
 ```
 Headers: Authorization: Bearer <token>
 Body: { "name": "Laptop", "price": 999.99, "stock": 10, "category": "electronics" }
@@ -1425,6 +1458,7 @@ Body: { "name": "Laptop", "price": 999.99, "stock": 10, "category": "electronics
 ```
 
 #### PUT /api/products/:id
+
 ```
 Headers: Authorization: Bearer <token>
 Body: { "price": 899.99, "stock": 15 }
@@ -1434,6 +1468,7 @@ Body: { "price": 899.99, "stock": 15 }
 ```
 
 #### DELETE /api/products/:id
+
 ```
 Headers: Authorization: Bearer <token>
 
@@ -1446,6 +1481,7 @@ Headers: Authorization: Bearer <token>
 ### Order Service — Base URL: `http://localhost:3003`
 
 #### POST /api/orders
+
 ```
 Headers: Authorization: Bearer <token>
 Body:
@@ -1473,6 +1509,7 @@ Body:
 ```
 
 #### GET /api/orders
+
 ```
 Headers: Authorization: Bearer <token>
 
@@ -1481,6 +1518,7 @@ Headers: Authorization: Bearer <token>
 ```
 
 #### GET /api/orders/:id
+
 ```
 Headers: Authorization: Bearer <token>
 
@@ -1497,41 +1535,41 @@ Headers: Authorization: Bearer <token>
 
 ### Shared across all services
 
-| Package | Version | Purpose |
-|---|---|---|
-| `express` | ^5.2.1 | HTTP web server |
-| `@grpc/grpc-js` | ^1.14.4 | gRPC implementation for Node.js |
-| `@grpc/proto-loader` | ^0.8.1 | Load `.proto` files dynamically at runtime |
-| `@prisma/client` | ^6.4.0 | Type-safe PostgreSQL ORM |
-| `cors` | ^2.8.6 | Enable cross-origin HTTP requests |
-| `dotenv` | ^17.4.2 | Load environment variables from `.env` |
-| `express-rate-limit` | ^7.5.0 | Rate limiting middleware |
-| `typescript` | ^5.8.3 | Type-safe JavaScript |
-| `ts-node` | ^10.9.2 | Run TypeScript directly without build step |
-| `nodemon` | ^3.1.10 | Auto-restart on file changes (dev) |
-| `prisma` | ^6.4.0 | Database migrations and schema generation |
+| Package              | Version | Purpose                                    |
+| -------------------- | ------- | ------------------------------------------ |
+| `express`            | ^5.2.1  | HTTP web server                            |
+| `@grpc/grpc-js`      | ^1.14.4 | gRPC implementation for Node.js            |
+| `@grpc/proto-loader` | ^0.8.1  | Load `.proto` files dynamically at runtime |
+| `@prisma/client`     | ^6.4.0  | Type-safe PostgreSQL ORM                   |
+| `cors`               | ^2.8.6  | Enable cross-origin HTTP requests          |
+| `dotenv`             | ^17.4.2 | Load environment variables from `.env`     |
+| `express-rate-limit` | ^7.5.0  | Rate limiting middleware                   |
+| `typescript`         | ^5.8.3  | Type-safe JavaScript                       |
+| `ts-node`            | ^10.9.2 | Run TypeScript directly without build step |
+| `nodemon`            | ^3.1.10 | Auto-restart on file changes (dev)         |
+| `prisma`             | ^6.4.0  | Database migrations and schema generation  |
 
 ### auth-service only
 
-| Package | Purpose |
-|---|---|
+| Package        | Purpose                      |
+| -------------- | ---------------------------- |
 | `jsonwebtoken` | Create and verify JWT tokens |
-| `bcryptjs` | Securely hash passwords |
-| `ioredis` | Redis client (Node.js) |
+| `bcryptjs`     | Securely hash passwords      |
+| `ioredis`      | Redis client (Node.js)       |
 
 ### product-service only
 
-| Package | Purpose |
-|---|---|
+| Package   | Purpose                            |
+| --------- | ---------------------------------- |
 | `amqplib` | AMQP client to connect to RabbitMQ |
-| `ioredis` | Redis client (Node.js) |
+| `ioredis` | Redis client (Node.js)             |
 
 ### order-service only
 
-| Package | Purpose |
-|---|---|
+| Package   | Purpose                            |
+| --------- | ---------------------------------- |
 | `amqplib` | AMQP client to connect to RabbitMQ |
 
 ---
 
-*Last updated: September 2026 | Stack: TypeScript · Node.js · Express · gRPC · Prisma · PostgreSQL · Redis · RabbitMQ · Docker*
+_Last updated: September 2026 | Stack: TypeScript · Node.js · Express · gRPC · Prisma · PostgreSQL · Redis · RabbitMQ · Docker_
