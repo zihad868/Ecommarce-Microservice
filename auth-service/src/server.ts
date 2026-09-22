@@ -13,7 +13,7 @@ app.use(cors());
 // ── Rate Limiting ──────────────────────────────────────────
 const globalLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 500,
+  max: 5000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: 'Too many requests, please try again later.' },
@@ -21,8 +21,8 @@ const globalLimiter = rateLimit({
 
 // Strict limiter for auth routes (prevent brute force)
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+  windowMs: 60 * 1000,
+  max: 50,
   message: { success: false, error: 'Too many login attempts, please try again after 15 minutes.' },
 });
 
