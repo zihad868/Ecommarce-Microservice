@@ -108,6 +108,7 @@ services:
     volumes:
       - ./protos:/usr/src/app/protos
       - ./protos:/usr/src/protos
+    command: sh -c "npx prisma db push && node dist/server.js"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
       interval: 15s
@@ -143,6 +144,7 @@ services:
     volumes:
       - ./protos:/usr/src/app/protos
       - ./protos:/usr/src/protos
+    command: sh -c "npx prisma db push && node dist/server.js"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
       interval: 15s
@@ -181,6 +183,7 @@ services:
     volumes:
       - ./protos:/usr/src/app/protos
       - ./protos:/usr/src/protos
+    command: sh -c "npx prisma db push && node dist/server.js"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3003/health || exit 1"]
       interval: 15s
