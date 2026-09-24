@@ -22,8 +22,8 @@
            └───────────────┴──────────────────┘
                            │
                     ┌──────▼──────┐    ┌─────────────┐
-                    │    Redis    │    │  RabbitMQ   │
-                    │    :6379    │    │    :5672    │
+                    │    Redis    │    │  Kafka   │
+                    │    :6379    │    │    :9092    │
                     └─────────────┘    └─────────────┘
 ```
 
@@ -44,7 +44,7 @@
 
 ### Option A — Run via Docker (Recommended ✅)
 
-> Everything runs inside Docker — databases, Redis, RabbitMQ, and all 3 services. No manual setup needed.
+> Everything runs inside Docker — databases, Redis, Kafka, and all 3 services. No manual setup needed.
 
 **Step 1: Clone / Open Project**
 ```bash
@@ -87,11 +87,11 @@ docker compose down -v
 
 ### Option B — Run Locally (Development)
 
-> For development, run services outside Docker but keep infra (DB, Redis, RabbitMQ) in Docker.
+> For development, run services outside Docker but keep infra (DB, Redis, Kafka) in Docker.
 
 **Step 1: Start Infrastructure Only**
 ```bash
-docker compose up rabbitmq redis auth-db order-db product-db
+docker compose up zookeeper kafka redis auth-db order-db product-db
 ```
 
 **Step 2: Create `.env` files in each service**
@@ -111,7 +111,7 @@ REDIS_PORT=6379
 PORT=3002
 GRPC_PORT=50052
 DATABASE_URL=postgresql://product_user:product_password@localhost:5435/product_db?schema=public
-RABBITMQ_URL=amqp://user:password@localhost:5672
+KAFKA_BROKER=localhost:9093
 AUTH_GRPC_URL=localhost:50051
 REDIS_HOST=localhost
 REDIS_PORT=6379
@@ -122,7 +122,7 @@ REDIS_PORT=6379
 PORT=3003
 GRPC_PORT=50053
 DATABASE_URL=postgresql://order_user:order_password@localhost:5434/order_db?schema=public
-RABBITMQ_URL=amqp://user:password@localhost:5672
+KAFKA_BROKER=localhost:9093
 AUTH_GRPC_URL=localhost:50051
 PRODUCT_GRPC_URL=localhost:50052
 REDIS_HOST=localhost
@@ -159,7 +159,7 @@ cd order-service && npm run dev
 
 | Dashboard | URL | Credentials |
 |-----------|-----|-------------|
-| RabbitMQ Management | http://localhost:15672 | user / password |
+| Kafka UI | http://localhost:8080 | *(no login required)* |
 
 ---
 
@@ -434,7 +434,7 @@ Authorization: Bearer <your_token_here>
 }
 ```
 
-> After order creation, the order-service publishes an `order.created` event to RabbitMQ → product-service consumes it and decrements stock automatically.
+> After order creation, the order-service publishes an `order.created` event to Kafka → product-service consumes it and decrements stock automatically.
 
 ---
 
@@ -514,7 +514,7 @@ Authorization: Bearer <your_token_here>
 7. POST /api/orders                 → Create order using product ID
 8. GET  /api/orders                 → List your orders
 9. GET  /api/orders/:id             → Inspect order details
-10. GET /api/products/:id           → Check stock decremented by RabbitMQ!
+10. GET /api/products/:id           → Check stock decremented by Kafka!
 ```
 
 ---
@@ -584,4 +584,6 @@ Then use `{{token}}`, `{{product_id}}`, `{{order_id}}` in your requests!
 | product-service | 3002 | 50052 | 5435 (PG) |
 | order-service | 3003 | 50053 | 5434 (PG) |
 | Redis | — | — | 6379 |
-| RabbitMQ | — | — | 5672 (AMQP) / 15672 (UI) |
+| Zookeeper | — | — | 2181 |
+| Kafka | — | — | 9092 (internal) / 9093 (host) |
+| Kafka UI | 8080 | — | — |
