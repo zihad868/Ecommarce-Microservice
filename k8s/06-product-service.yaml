@@ -1,0 +1,203 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# PRODUCT SERVICE
+# - min 3 pods, max 10 pods (HPA request-based scaling)
+# - Request limit exceed হলে queue-তে wait করবে
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: ecommerce
+  labels:
+    app: product-service
+    tier: service
+    version: "1.0"
+spec:
+  replicas: 3                   # ── initial 3 pods
+  selector:
+    matchLabels:
+      app: product-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2               # scale up এর সময় 2 নতুন pod
+      maxUnavailable: 0         # zero downtime
+  template:
+    metadata:
+      labels:
+        app: product-service
+        tier: service
+        version: "1.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3002"
+        prometheus.io/path: "/metrics"
+    spec:
+      # ── Pod anti-affinity: pods আলাদা nodes-এ spread করবে ───────────────
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - product-service
+                topologyKey: kubernetes.io/hostname
+      
+      # ── Init container: DB migration ──────────────────────────────────────
+      initContainers:
+        - name: db-migrate
+          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/product-service:latest
+          command: ["sh", "-c", "npx prisma db push"]
+          envFrom:
+            - secretRef:
+                name: product-service-secret
+          env:
+            - name: PORT
+              value: "3002"
+            - name: GRPC_PORT
+              value: "50052"
+      
+      containers:
+        - name: product-service
+          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/product-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3002
+              name: http
+              protocol: TCP
+            - containerPort: 50052
+              name: grpc
+              protocol: TCP
+          
+          env:
+            - name: PORT
+              value: "3002"
+            - name: GRPC_PORT
+              value: "50052"
+          
+          envFrom:
+            - secretRef:
+                name: product-service-secret
+          
+          # ── Resource Requests & Limits ────────────────────────────────────
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "600m"
+          
+          # ── Health Probes ─────────────────────────────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3002
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3002
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3002
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+      
+      terminationGracePeriodSeconds: 30
+
+---
+
+# ── Product Service — ClusterIP Service ──────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  namespace: ecommerce
+  labels:
+    app: product-service
+spec:
+  selector:
+    app: product-service
+  ports:
+    - name: http
+      port: 3002
+      targetPort: 3002
+      protocol: TCP
+    - name: grpc
+      port: 50052
+      targetPort: 50052
+      protocol: TCP
+  type: ClusterIP
+
+---
+
+# ── HPA: min=3, max=10 ───────────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: product-service-hpa
+  namespace: ecommerce
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: product-service
+  minReplicas: 3          # ── সবসময় minimum 3 pods
+  maxReplicas: 10         # ── maximum 10 pods
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 3                      # একবারে max 3 pod বাড়াবে (faster scale)
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+
+---
+
+# ── PodDisruptionBudget: min 2 pods সবসময় সচল ──────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: product-service-pdb
+  namespace: ecommerce
+spec:
+  minAvailable: 2         # 3 pods এর মধ্যে min 2 সচল থাকবে
+  selector:
+    matchLabels:
+      app: product-service

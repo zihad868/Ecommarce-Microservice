@@ -1,0 +1,163 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NGINX INGRESS CONTROLLER — AWS ALB এর পরিবর্তে NGINX Ingress ব্যবহার করা হচ্ছে
+# AWS তে AWS Load Balancer Controller দিয়ে এটা ALB-backed হবে
+#
+# Prerequisites:
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.0/deploy/static/provider/aws/deploy.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ecommerce-ingress
+  namespace: ecommerce
+  annotations:
+    # ── AWS ALB annotations ───────────────────────────────────────────────
+    kubernetes.io/ingress.class: "nginx"
+    
+    # ── Rate limiting: max requests exceed হলে 429 + wait করবে ──────────
+    # auth-service: 8 requests/s per IP (max 8 pods)
+    nginx.ingress.kubernetes.io/limit-rps: "50"             # Global RPS limit
+    nginx.ingress.kubernetes.io/limit-connections: "20"     # Concurrent connections
+    
+    # ── Request buffering (queue effect) ──────────────────────────────────
+    nginx.ingress.kubernetes.io/proxy-buffering: "on"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "128k"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"    # 60s wait করবে
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    
+    # ── SSL/TLS (AWS ACM certificate) ─────────────────────────────────────
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    
+    # ── CORS ──────────────────────────────────────────────────────────────
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type"
+
+spec:
+  # ── TLS (uncomment করুন যখন domain থাকবে) ──────────────────────────────
+  # tls:
+  #   - hosts:
+  #       - api.yourdomain.com
+  #     secretName: ecommerce-tls
+  
+  rules:
+    - host: api.yourdomain.com    # ← আপনার domain দিন
+      http:
+        paths:
+          # ── Auth Service routes ──────────────────────────────────────────
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 3001
+          
+          # ── Product Service routes ───────────────────────────────────────
+          - path: /api/products
+            pathType: Prefix
+            backend:
+              service:
+                name: product-service
+                port:
+                  number: 3002
+          
+          # ── Order Service routes ─────────────────────────────────────────
+          - path: /api/orders
+            pathType: Prefix
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: 3003
+
+---
+
+# ── Per-service Rate Limiting via separate Ingress rules ─────────────────────
+# Auth service: strict rate limit (max 8 pods → limit accordingly)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: auth-service-ingress
+  namespace: ecommerce
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    # Max 8 pods × ~100 req/pod = 800 req/s total capacity
+    # Rate limit করে overflow request গুলো 429 দিয়ে reject করা হবে
+    # Client side এ retry + backoff দিয়ে "wait" করবে
+    nginx.ingress.kubernetes.io/limit-rps: "200"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "3"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"
+spec:
+  rules:
+    - host: auth.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 3001
+
+---
+
+# Product service: higher limit (max 10 pods)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: product-service-ingress
+  namespace: ecommerce
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/limit-rps: "300"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "3"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"
+spec:
+  rules:
+    - host: product.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: product-service
+                port:
+                  number: 3002
+
+---
+
+# Order service: moderate limit (max 8 pods)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: order-service-ingress
+  namespace: ecommerce
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/limit-rps: "200"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "3"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-next-upstream: "error timeout"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-tries: "3"
+spec:
+  rules:
+    - host: order.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: 3003

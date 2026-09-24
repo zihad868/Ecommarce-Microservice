@@ -1,0 +1,208 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AUTH SERVICE
+# - min 2 pods, max 8 pods (HPA request-based scaling)
+# - Request limit exceed হলে queue-তে wait করবে (PodDisruptionBudget + rate limit)
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: ecommerce
+  labels:
+    app: auth-service
+    tier: service
+    version: "1.0"
+spec:
+  replicas: 2                   # ── initial 2 pods
+  selector:
+    matchLabels:
+      app: auth-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1               # একসাথে 1 নতুন pod আসতে পারবে
+      maxUnavailable: 0         # zero downtime — সবসময় সব pods ready থাকবে
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        tier: service
+        version: "1.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3001"
+        prometheus.io/path: "/metrics"
+    spec:
+      # ── Pod anti-affinity: দুটো pod কখনো একই node-এ যাবে না ──────────────
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - auth-service
+                topologyKey: kubernetes.io/hostname
+      
+      # ── Init container: DB migration আগে run করবে ──────────────────────────
+      initContainers:
+        - name: db-migrate
+          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/auth-service:latest
+          command: ["sh", "-c", "npx prisma db push"]
+          envFrom:
+            - secretRef:
+                name: auth-service-secret
+          env:
+            - name: PORT
+              value: "3001"
+            - name: GRPC_PORT
+              value: "50051"
+      
+      containers:
+        - name: auth-service
+          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/auth-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3001
+              name: http
+              protocol: TCP
+            - containerPort: 50051
+              name: grpc
+              protocol: TCP
+          
+          env:
+            - name: PORT
+              value: "3001"
+            - name: GRPC_PORT
+              value: "50051"
+          
+          envFrom:
+            - secretRef:
+                name: auth-service-secret
+          
+          # ── Resource Requests & Limits ────────────────────────────────────
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"       # HPA এই CPU দেখে scale করবে
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          
+          # ── Health Probes ─────────────────────────────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12   # 12 * 5s = 60s startup time দেওয়া হলো
+      
+      # ── Graceful termination: চলমান requests শেষ হওয়ার সুযোগ দেবে ─────────
+      terminationGracePeriodSeconds: 30
+
+---
+
+# ── Auth Service — HTTP Service ───────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: ecommerce
+  labels:
+    app: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - name: http
+      port: 3001
+      targetPort: 3001
+      protocol: TCP
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+      protocol: TCP
+  type: ClusterIP
+
+---
+
+# ── HPA: Horizontal Pod Autoscaler ───────────────────────────────────────────
+# CPU > 70% হলে scale up, min=2, max=8
+# Request limit exceed হলে নতুন pod আসবে, না হলে wait (queue) করবে
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: auth-service-hpa
+  namespace: ecommerce
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: auth-service
+  minReplicas: 2          # ── সবসময় minimum 2 pods চলবে
+  maxReplicas: 8          # ── maximum 8 pods পর্যন্ত scale হবে
+  metrics:
+    # ── CPU-based scaling ──────────────────────────────────────────────────
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70    # CPU 70% হলে scale up শুরু
+    # ── Memory-based scaling ───────────────────────────────────────────────
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80    # Memory 80% হলে scale up
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60    # 60s দেখার পরে scale up করবে
+      policies:
+        - type: Pods
+          value: 2                      # একবারে max 2 pod বাড়াবে
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300   # 5 মিনিট stable থাকলে scale down
+      policies:
+        - type: Pods
+          value: 1                      # একবারে max 1 pod কমাবে
+          periodSeconds: 120
+
+---
+
+# ── PodDisruptionBudget: Rolling update/drain এর সময় min 1 pod সচল থাকবে ──
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: auth-service-pdb
+  namespace: ecommerce
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: auth-service

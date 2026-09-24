@@ -1,0 +1,86 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# METRICS SERVER — HPA কাজ করার জন্য এটা দরকার
+# AWS EKS তে সাধারণত pre-installed থাকে
+# ─────────────────────────────────────────────────────────────────────────────
+
+# EKS এ Metrics Server install করতে:
+# kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+---
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLUSTER AUTOSCALER — Node-level scaling (নতুন EC2 instance যোগ করবে)
+# HPA → pod বাড়ায়, CA → node বাড়ায়
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    k8s-addon: cluster-autoscaler.addons.k8s.io
+    k8s-app: cluster-autoscaler
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/EKSClusterAutoscalerRole
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    app: cluster-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cluster-autoscaler
+  template:
+    metadata:
+      labels:
+        app: cluster-autoscaler
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8085"
+    spec:
+      priorityClassName: system-cluster-critical
+      serviceAccountName: cluster-autoscaler
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: cluster-autoscaler
+          image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.29.0
+          command:
+            - ./cluster-autoscaler
+            - "--cloud-provider=aws"
+            - "--namespace=kube-system"
+            - "--nodes=2:10:eks-node-group"    # min:max:asg-name
+            - "--skip-nodes-with-local-storage=false"
+            - "--expander=least-waste"
+            - "--scale-down-delay-after-add=5m"
+            - "--scale-down-unneeded-time=5m"
+            - "--balance-similar-node-groups"
+            - "--skip-nodes-with-system-pods=false"
+          env:
+            - name: AWS_REGION
+              value: "ap-southeast-1"    # ← আপনার region দিন
+          resources:
+            requests:
+              cpu: 100m
+              memory: 300Mi
+            limits:
+              cpu: 100m
+              memory: 300Mi
+          volumeMounts:
+            - name: ssl-certs
+              mountPath: /etc/ssl/certs/ca-certificates.crt
+              readOnly: true
+      volumes:
+        - name: ssl-certs
+          hostPath:
+            path: /etc/ssl/certs/ca-bundle.crt
