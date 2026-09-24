@@ -1,20 +1,57 @@
 services:
 
-  # ── Message Broker ─────────────────────────────────────────────────────────
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
+  # ── Kafka Zookeeper ─────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
     environment:
-      RABBITMQ_DEFAULT_USER: user
-      RABBITMQ_DEFAULT_PASS: password
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ── Kafka Broker ────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Internal listener for containers, external for host machine
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+
+  # ── Kafka UI (Management Dashboard) ────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
 
   # ── Shared Cache (Redis) ───────────────────────────────────────────────────
   redis:
@@ -128,14 +165,14 @@ services:
       - PORT=3002
       - GRPC_PORT=50052
       - DATABASE_URL=postgresql://product_user:product_password@product-db:5432/product_db?schema=public
-      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - KAFKA_BROKER=kafka:9092
       - AUTH_GRPC_URL=auth-service:50051
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
       product-db:
         condition: service_healthy
-      rabbitmq:
+      kafka:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -164,7 +201,7 @@ services:
       - PORT=3003
       - GRPC_PORT=50053
       - DATABASE_URL=postgresql://order_user:order_password@order-db:5432/order_db?schema=public
-      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - KAFKA_BROKER=kafka:9092
       - AUTH_GRPC_URL=auth-service:50051
       - PRODUCT_GRPC_URL=product-service:50052
       - REDIS_HOST=redis
@@ -172,7 +209,7 @@ services:
     depends_on:
       order-db:
         condition: service_healthy
-      rabbitmq:
+      kafka:
         condition: service_healthy
       redis:
         condition: service_healthy

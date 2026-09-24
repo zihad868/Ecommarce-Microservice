@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { connectRabbitMQ } from './events/rabbitmq';
+import { connectKafkaProducer, disconnectKafkaProducer } from './events/kafka';
 import { startGrpcServer } from './grpc/orderServer';
 import errorHandler from './middlewares/errorHandler';
 import orderRoutes from './routes/orderRoutes';
@@ -33,8 +33,17 @@ app.get('/health', (_req, res) => {
 });
 
 // ── Connect Services ───────────────────────────────────────
-void connectRabbitMQ();
+void connectKafkaProducer();
 startGrpcServer();
+
+// ── Graceful Shutdown ──────────────────────────────────────
+const shutdown = async () => {
+  console.log('Order Service shutting down...');
+  await disconnectKafkaProducer();
+  process.exit(0);
+};
+process.on('SIGTERM', () => void shutdown());
+process.on('SIGINT',  () => void shutdown());
 
 // ── REST API Routes ────────────────────────────────────────
 app.use('/api/orders', orderRoutes);

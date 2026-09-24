@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { startGrpcServer } from './grpc/productServer';
-import { connectRabbitMQ } from './events/rabbitmq';
+import { connectKafkaConsumer, disconnectKafkaConsumer } from './events/kafka';
 
 import errorHandler from './middlewares/errorHandler';
 import productRoutes from './routes/productRoutes';
@@ -35,8 +35,17 @@ app.get('/health', (_req, res) => {
 
 // ── Connect to Databases ───────────────────────────────────
 
-void connectRabbitMQ();
+void connectKafkaConsumer();
 startGrpcServer();
+
+// ── Graceful Shutdown ──────────────────────────────────────
+const shutdown = async () => {
+  console.log('Product Service shutting down...');
+  await disconnectKafkaConsumer();
+  process.exit(0);
+};
+process.on('SIGTERM', () => void shutdown());
+process.on('SIGINT',  () => void shutdown());
 
 // ── REST API Routes ────────────────────────────────────────
 app.use('/api/products', productRoutes);

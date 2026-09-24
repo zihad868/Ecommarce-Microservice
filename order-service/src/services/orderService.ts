@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { getProductDetails } from '../grpc/grpcClients';
-import { publishEvent } from '../events/rabbitmq';
+import { publishEvent } from '../events/kafka';
 
 const prisma = new PrismaClient();
 
@@ -47,7 +47,7 @@ export const createOrder = async (userId: string, items: OrderItemInput[]) => {
     },
   });
 
-  // Publish Event to RabbitMQ
+  // Publish Event to Kafka
   await publishEvent('order.created', {
     orderId: order.id,
     items: validatedItems,
