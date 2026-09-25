@@ -1,8 +1,8 @@
 FROM node:20-alpine
 WORKDIR /usr/src/app
-COPY package*.json ./
+COPY order-service/package*.json ./
 RUN npm ci
-COPY . .
+COPY order-service/ ./
 COPY protos/ /usr/src/protos/
 RUN npx prisma generate
 RUN npm run build

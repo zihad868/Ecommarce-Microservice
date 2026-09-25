@@ -1,8 +1,8 @@
 FROM node:20-alpine
 WORKDIR /usr/src/app
-COPY package*.json ./
+COPY auth-service/package*.json ./
 RUN npm ci
-COPY . .
+COPY auth-service/ ./
 COPY protos/ /usr/src/protos/
 RUN npx prisma generate
 RUN npm run build
