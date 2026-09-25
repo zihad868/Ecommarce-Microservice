@@ -36,7 +36,7 @@ services:
 
   # ── Kafka UI (Management Dashboard) ────────────────────────────────────────
   kafka-ui:
-    image: provectuslabs/kafka-ui:latest
+    image: provectuslabs/kafka-ui:v0.7.2
     container_name: kafka-ui
     ports:
       - "8080:8080"
@@ -120,7 +120,8 @@ services:
   # ── Auth Service ───────────────────────────────────────────────────────────
   auth-service:
     build:
-      context: ./auth-service
+      context: .
+      dockerfile: ./auth-service/Dockerfile
     container_name: auth-service
     ports:
       - "3001:3001"
@@ -137,9 +138,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./protos:/usr/src/app/protos
-      - ./protos:/usr/src/protos
     command: sh -c "npx prisma db push && node dist/server.js"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
@@ -151,7 +149,8 @@ services:
   # ── Product Service ────────────────────────────────────────────────────────
   product-service:
     build:
-      context: ./product-service
+      context: .
+      dockerfile: ./product-service/Dockerfile
     container_name: product-service
     ports:
       - "3002:3002"
@@ -173,9 +172,6 @@ services:
         condition: service_healthy
       auth-service:
         condition: service_healthy
-    volumes:
-      - ./protos:/usr/src/app/protos
-      - ./protos:/usr/src/protos
     command: sh -c "npx prisma db push && node dist/server.js"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
@@ -187,7 +183,8 @@ services:
   # ── Order Service ──────────────────────────────────────────────────────────
   order-service:
     build:
-      context: ./order-service
+      context: .
+      dockerfile: ./order-service/Dockerfile
     container_name: order-service
     ports:
       - "3003:3003"
@@ -212,9 +209,6 @@ services:
         condition: service_healthy
       product-service:
         condition: service_healthy
-    volumes:
-      - ./protos:/usr/src/app/protos
-      - ./protos:/usr/src/protos
     command: sh -c "npx prisma db push && node dist/server.js"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3003/health || exit 1"]

@@ -51,7 +51,7 @@ spec:
       # ── Init container: DB migration ──────────────────────────────────────
       initContainers:
         - name: db-migrate
-          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/product-service:latest
+          image: product-service:1.0.0
           command: ["sh", "-c", "npx prisma db push"]
           envFrom:
             - secretRef:
@@ -64,8 +64,8 @@ spec:
       
       containers:
         - name: product-service
-          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/product-service:latest
-          imagePullPolicy: Always
+          image: product-service:1.0.0
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3002
               name: http

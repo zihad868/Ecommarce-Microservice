@@ -1,6 +1,70 @@
 # 🚀 AWS Production-Grade Kubernetes Deployment Guide
 ## Ecommerce Microservice — Full K8s Setup
 
+## Recommended Run Modes
+
+Use Docker Compose for local development. Use Kubernetes only after the service images have been built, tagged with a version, and pushed to a registry. Do not use `latest` in a shared cluster.
+
+### Local Docker Compose
+
+From the repository root:
+
+```powershell
+docker compose up --build -d
+docker compose ps
+Invoke-WebRequest http://localhost:3001/health
+Invoke-WebRequest http://localhost:3002/health
+Invoke-WebRequest http://localhost:3003/health
+```
+
+Stop the stack with `docker compose down`; add `-v` only when you intentionally want to delete local database and Redis data.
+
+### Kubernetes Prerequisites
+
+The manifests target an AWS EKS cluster with a default `gp2`/`gp3` StorageClass, Metrics Server, an ingress controller, and a registry such as ECR. The PostgreSQL, Redis, and single-node Kafka manifests are suitable for development or a small non-critical environment. For production, use RDS, ElastiCache, and MSK instead of running stateful infrastructure inside the application cluster.
+
+### Build and Push Versioned Images
+
+```powershell
+$AccountId = aws sts get-caller-identity --query Account --output text
+$Region = "ap-southeast-1"
+$Registry = "$AccountId.dkr.ecr.$Region.amazonaws.com"
+$Version = "1.0.0"
+
+aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $Registry
+
+docker build -f auth-service/Dockerfile -t "$Registry/auth-service:$Version" .
+docker build -f product-service/Dockerfile -t "$Registry/product-service:$Version" .
+docker build -f order-service/Dockerfile -t "$Registry/order-service:$Version" .
+docker push "$Registry/auth-service:$Version"
+docker push "$Registry/product-service:$Version"
+docker push "$Registry/order-service:$Version"
+```
+
+Create the ECR repositories once with `aws ecr create-repository --repository-name <service> --region $Region`.
+
+### Configure and Deploy with Kustomize
+
+```powershell
+kubectl apply -f k8s/00-namespace.yaml
+kubectl create secret generic auth-service-secret -n ecommerce --from-literal=DATABASE_URL="postgresql://..." --from-literal=JWT_SECRET="<random-secret>" --from-literal=REDIS_HOST=redis-service --from-literal=REDIS_PORT=6379
+# Create the remaining service and database secrets with the same approach.
+
+Push-Location k8s
+kustomize edit set image auth-service="$Registry/auth-service:$Version"
+kustomize edit set image product-service="$Registry/product-service:$Version"
+kustomize edit set image order-service="$Registry/order-service:$Version"
+Pop-Location
+
+kubectl apply -k k8s
+kubectl rollout status deployment/auth-service -n ecommerce --timeout=180s
+kubectl rollout status deployment/product-service -n ecommerce --timeout=180s
+kubectl rollout status deployment/order-service -n ecommerce --timeout=180s
+kubectl get pods,svc,hpa,ingress -n ecommerce
+```
+
+For a disposable local cluster only, apply `kubectl apply -f k8s/01-secrets.yaml` before `kubectl apply -k k8s`. Do not apply that file to production: it contains example credentials. Use AWS Secrets Manager with External Secrets Operator, or create the Kubernetes Secrets from a CI/CD secret store. Replace the placeholder hostnames in `k8s/08-ingress.yaml` and configure TLS before exposing the API.
+
 ---
 
 ## 📐 Architecture Overview

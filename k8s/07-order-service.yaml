@@ -50,7 +50,7 @@ spec:
       # ── Init container: DB migration ──────────────────────────────────────
       initContainers:
         - name: db-migrate
-          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/order-service:latest
+          image: order-service:1.0.0
           command: ["sh", "-c", "npx prisma db push"]
           envFrom:
             - secretRef:
@@ -63,8 +63,8 @@ spec:
       
       containers:
         - name: order-service
-          image: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/order-service:latest
-          imagePullPolicy: Always
+          image: order-service:1.0.0
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3003
               name: http
