@@ -1,3 +1,9 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NAMESPACE — সব resources এই namespace-এ থাকবে
+# এটা সবার আগে apply করতে হবে
+# kubectl apply -f 00-namespace.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -5,3 +11,9 @@ metadata:
   labels:
     name: ecommerce
     environment: production
+    # Istio service mesh injection (ভবিষ্যতে দরকার হলে)
+    istio-injection: disabled
+  annotations:
+    # এই namespace-এর owner এবং purpose
+    meta.helm.sh/release-name: ecommerce-microservice
+    description: "Ecommerce Microservice Platform - Production"

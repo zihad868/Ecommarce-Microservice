@@ -1,7 +1,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# AUTH DATABASE — PostgreSQL StatefulSet
-# Production এ AWS RDS PostgreSQL ব্যবহার strongly recommended
+# DATABASES — PostgreSQL StatefulSets (Auth, Product, Order)
+#
+# Production Recommendation:
+#   AWS RDS PostgreSQL (Multi-AZ) ব্যবহার করুন:
+#   - Automated backups
+#   - Point-in-time recovery
+#   - Read replicas
+#   এই StatefulSet শুধু self-managed/staging এর জন্য
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ═════════════════════════════════════════════════════════════════════════════
+# AUTH DATABASE
+# ═════════════════════════════════════════════════════════════════════════════
 
 apiVersion: apps/v1
 kind: StatefulSet
@@ -11,6 +21,7 @@ metadata:
   labels:
     app: auth-db
     tier: database
+    db: postgres
 spec:
   serviceName: auth-db-headless
   replicas: 1
@@ -22,15 +33,40 @@ spec:
       labels:
         app: auth-db
         tier: database
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"    # postgres_exporter port (monitoring)
     spec:
+      # ── Security Context ─────────────────────────────────────────────────
+      securityContext:
+        runAsUser: 999     # postgres user UID
+        runAsGroup: 999
+        fsGroup: 999
+        runAsNonRoot: true
+
       containers:
         - name: postgres
           image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+
           ports:
             - containerPort: 5432
+              name: postgres
+              protocol: TCP
+
+          # Secrets থেকে environment variables
           envFrom:
             - secretRef:
                 name: auth-db-secret
+
+          # Non-sensitive config
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF-8 --locale=en_US.UTF-8"
+
+          # ── Resource Requests & Limits ──────────────────────────────────
           resources:
             requests:
               memory: "256Mi"
@@ -38,9 +74,12 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "300m"
+
           volumeMounts:
             - name: auth-db-data
               mountPath: /var/lib/postgresql/data
+
+          # ── Health Probes ───────────────────────────────────────────────
           livenessProbe:
             exec:
               command:
@@ -49,9 +88,11 @@ spec:
                 - "auth_user"
                 - "-d"
                 - "auth_db"
-            initialDelaySeconds: 20
-            periodSeconds: 10
+            initialDelaySeconds: 30
+            periodSeconds: 15
             timeoutSeconds: 5
+            failureThreshold: 5
+
           readinessProbe:
             exec:
               command:
@@ -63,9 +104,39 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 5
+            failureThreshold: 3
+
+          startupProbe:
+            exec:
+              command:
+                - pg_isready
+                - "-U"
+                - "auth_user"
+                - "-d"
+                - "auth_db"
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12   # 60s startup window
+
+          # ── Container Security ──────────────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false   # Postgres writes to /var/lib/postgresql
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - SETGID
+                - SETUID
+
+      terminationGracePeriodSeconds: 60
+
   volumeClaimTemplates:
     - metadata:
         name: auth-db-data
+        labels:
+          app: auth-db
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: gp2
@@ -75,20 +146,25 @@ spec:
 
 ---
 
+# ── Auth DB Headless Service ──────────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
   name: auth-db-headless
   namespace: ecommerce
+  labels:
+    app: auth-db
 spec:
   clusterIP: None
   selector:
     app: auth-db
   ports:
     - port: 5432
+      name: postgres
 
 ---
 
+# ── Auth DB Service ───────────────────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
@@ -96,19 +172,22 @@ metadata:
   namespace: ecommerce
   labels:
     app: auth-db
+    tier: database
 spec:
   selector:
     app: auth-db
   ports:
     - port: 5432
       targetPort: 5432
+      name: postgres
+      protocol: TCP
   type: ClusterIP
 
 ---
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PRODUCT DATABASE — PostgreSQL StatefulSet
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+# PRODUCT DATABASE
+# ═════════════════════════════════════════════════════════════════════════════
 
 apiVersion: apps/v1
 kind: StatefulSet
@@ -118,6 +197,7 @@ metadata:
   labels:
     app: product-db
     tier: database
+    db: postgres
 spec:
   serviceName: product-db-headless
   replicas: 1
@@ -129,15 +209,36 @@ spec:
       labels:
         app: product-db
         tier: database
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
     spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        runAsNonRoot: true
+
       containers:
         - name: postgres
           image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+
           ports:
             - containerPort: 5432
+              name: postgres
+              protocol: TCP
+
           envFrom:
             - secretRef:
                 name: product-db-secret
+
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF-8 --locale=en_US.UTF-8"
+
           resources:
             requests:
               memory: "256Mi"
@@ -145,9 +246,11 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "300m"
+
           volumeMounts:
             - name: product-db-data
               mountPath: /var/lib/postgresql/data
+
           livenessProbe:
             exec:
               command:
@@ -156,8 +259,11 @@ spec:
                 - "product_user"
                 - "-d"
                 - "product_db"
-            initialDelaySeconds: 20
-            periodSeconds: 10
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+
           readinessProbe:
             exec:
               command:
@@ -168,9 +274,39 @@ spec:
                 - "product_db"
             initialDelaySeconds: 10
             periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          startupProbe:
+            exec:
+              command:
+                - pg_isready
+                - "-U"
+                - "product_user"
+                - "-d"
+                - "product_db"
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - SETGID
+                - SETUID
+
+      terminationGracePeriodSeconds: 60
+
   volumeClaimTemplates:
     - metadata:
         name: product-db-data
+        labels:
+          app: product-db
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: gp2
@@ -180,20 +316,25 @@ spec:
 
 ---
 
+# ── Product DB Headless Service ───────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
   name: product-db-headless
   namespace: ecommerce
+  labels:
+    app: product-db
 spec:
   clusterIP: None
   selector:
     app: product-db
   ports:
     - port: 5432
+      name: postgres
 
 ---
 
+# ── Product DB Service ────────────────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
@@ -201,19 +342,22 @@ metadata:
   namespace: ecommerce
   labels:
     app: product-db
+    tier: database
 spec:
   selector:
     app: product-db
   ports:
     - port: 5432
       targetPort: 5432
+      name: postgres
+      protocol: TCP
   type: ClusterIP
 
 ---
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ORDER DATABASE — PostgreSQL StatefulSet
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+# ORDER DATABASE
+# ═════════════════════════════════════════════════════════════════════════════
 
 apiVersion: apps/v1
 kind: StatefulSet
@@ -223,6 +367,7 @@ metadata:
   labels:
     app: order-db
     tier: database
+    db: postgres
 spec:
   serviceName: order-db-headless
   replicas: 1
@@ -234,15 +379,36 @@ spec:
       labels:
         app: order-db
         tier: database
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
     spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        runAsNonRoot: true
+
       containers:
         - name: postgres
           image: postgres:15-alpine
+          imagePullPolicy: IfNotPresent
+
           ports:
             - containerPort: 5432
+              name: postgres
+              protocol: TCP
+
           envFrom:
             - secretRef:
                 name: order-db-secret
+
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_INITDB_ARGS
+              value: "--encoding=UTF-8 --locale=en_US.UTF-8"
+
           resources:
             requests:
               memory: "256Mi"
@@ -250,9 +416,11 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "300m"
+
           volumeMounts:
             - name: order-db-data
               mountPath: /var/lib/postgresql/data
+
           livenessProbe:
             exec:
               command:
@@ -261,8 +429,11 @@ spec:
                 - "order_user"
                 - "-d"
                 - "order_db"
-            initialDelaySeconds: 20
-            periodSeconds: 10
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+
           readinessProbe:
             exec:
               command:
@@ -273,9 +444,39 @@ spec:
                 - "order_db"
             initialDelaySeconds: 10
             periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          startupProbe:
+            exec:
+              command:
+                - pg_isready
+                - "-U"
+                - "order_user"
+                - "-d"
+                - "order_db"
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - SETGID
+                - SETUID
+
+      terminationGracePeriodSeconds: 60
+
   volumeClaimTemplates:
     - metadata:
         name: order-db-data
+        labels:
+          app: order-db
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: gp2
@@ -285,20 +486,25 @@ spec:
 
 ---
 
+# ── Order DB Headless Service ─────────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
   name: order-db-headless
   namespace: ecommerce
+  labels:
+    app: order-db
 spec:
   clusterIP: None
   selector:
     app: order-db
   ports:
     - port: 5432
+      name: postgres
 
 ---
 
+# ── Order DB Service ──────────────────────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
@@ -306,10 +512,13 @@ metadata:
   namespace: ecommerce
   labels:
     app: order-db
+    tier: database
 spec:
   selector:
     app: order-db
   ports:
     - port: 5432
       targetPort: 5432
+      name: postgres
+      protocol: TCP
   type: ClusterIP

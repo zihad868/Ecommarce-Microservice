@@ -1,0 +1,246 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DB MIGRATION JOB
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# কেন আলাদা Job?
+# - initContainer প্রতিটি pod restart-এ চলে (3 replicas = 3 বার migration!)
+# - Job একবারই চলে এবং complete হয়
+# - Deployment এর আগে এই Job run করুন
+#
+# ব্যবহার:
+#   kubectl apply -f k8s/12-db-migration-job.yaml
+#   kubectl wait --for=condition=complete job/db-migration -n ecommerce --timeout=300s
+#   kubectl delete -f k8s/12-db-migration-job.yaml  # (Optional: cleanup)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Auth DB Migration ─────────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: auth-db-migration
+  namespace: ecommerce
+  labels:
+    app: auth-service
+    job-type: db-migration
+  annotations:
+    # ArgoCD / Flux CD → sync hook হিসেবে ব্যবহার করা যায়
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  # Job fail হলে 3 বার retry করবে
+  backoffLimit: 3
+  # 5 মিনিটের মধ্যে শেষ না হলে fail করবে
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        job-type: db-migration
+    spec:
+      restartPolicy: Never   # Job-এ Never বা OnFailure ব্যবহার করতে হয়
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+
+      containers:
+        - name: auth-db-migrate
+          image: auth-service:1.0.0
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - |
+              echo "Running Auth DB migration..."
+              npx prisma db push --skip-generate
+              echo "Auth DB migration completed!"
+
+          envFrom:
+            - secretRef:
+                name: auth-service-secret
+
+          env:
+            - name: PORT
+              value: "3001"
+            - name: GRPC_PORT
+              value: "50051"
+            - name: NODE_ENV
+              value: "production"
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+
+# ── Product DB Migration ──────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: product-db-migration
+  namespace: ecommerce
+  labels:
+    app: product-service
+    job-type: db-migration
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: product-service
+        job-type: db-migration
+    spec:
+      restartPolicy: Never
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+
+      containers:
+        - name: product-db-migrate
+          image: product-service:1.0.0
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - |
+              echo "Running Product DB migration..."
+              npx prisma db push --skip-generate
+              echo "Product DB migration completed!"
+
+          envFrom:
+            - secretRef:
+                name: product-service-secret
+
+          env:
+            - name: PORT
+              value: "3002"
+            - name: GRPC_PORT
+              value: "50052"
+            - name: NODE_ENV
+              value: "production"
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+
+# ── Order DB Migration ────────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: order-db-migration
+  namespace: ecommerce
+  labels:
+    app: order-service
+    job-type: db-migration
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: order-service
+        job-type: db-migration
+    spec:
+      restartPolicy: Never
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+
+      containers:
+        - name: order-db-migrate
+          image: order-service:1.0.0
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - |
+              echo "Running Order DB migration..."
+              npx prisma db push --skip-generate
+              echo "Order DB migration completed!"
+
+          envFrom:
+            - secretRef:
+                name: order-service-secret
+
+          env:
+            - name: PORT
+              value: "3003"
+            - name: GRPC_PORT
+              value: "50053"
+            - name: NODE_ENV
+              value: "production"
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,383 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NETWORK POLICY — Zero Trust Security Model
+#
+# Default: সব traffic block করুন, তারপর explicitly allow করুন
+# এটা না থাকলে: সব pod সব pod-এর সাথে কথা বলতে পারে (security risk!)
+#
+# Prerequisites: Network Policy সাপোর্ট করে এমন CNI plugin দরকার
+#   - AWS VPC CNI + Calico
+#   - Cilium
+#   - Weave Net
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Default Deny All (Zero Trust) ────────────────────────────────────────────
+# প্রথমে ecommerce namespace-এ সব ingress + egress block
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: ecommerce
+spec:
+  podSelector: {}    # সব pods-এ apply
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+
+# ── DNS Egress (সব pods-এর জন্য) ────────────────────────────────────────────
+# DNS resolution ছাড়া কিছুই কাজ করবে না
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: ecommerce
+spec:
+  podSelector: {}    # সব pods-এ apply
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+---
+
+# ── Auth Service Network Policy ───────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: auth-service-netpol
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: auth-service
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Ingress থেকে HTTP traffic (port 3001)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3001
+          protocol: TCP
+
+    # Product/Order service থেকে gRPC traffic (port 50051)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: product-service
+        - podSelector:
+            matchLabels:
+              app: order-service
+      ports:
+        - port: 50051
+          protocol: TCP
+
+  egress:
+    # Auth DB-তে connection
+    - to:
+        - podSelector:
+            matchLabels:
+              app: auth-db
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # Redis-এ connection
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+
+---
+
+# ── Product Service Network Policy ────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: product-service-netpol
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: product-service
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Ingress থেকে HTTP traffic
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3002
+          protocol: TCP
+
+    # Order service থেকে gRPC traffic
+    - from:
+        - podSelector:
+            matchLabels:
+              app: order-service
+      ports:
+        - port: 50052
+          protocol: TCP
+
+  egress:
+    # Product DB-তে connection
+    - to:
+        - podSelector:
+            matchLabels:
+              app: product-db
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # Redis-এ connection
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+
+    # Kafka-তে connection
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - port: 9092
+          protocol: TCP
+
+    # Auth service gRPC
+    - to:
+        - podSelector:
+            matchLabels:
+              app: auth-service
+      ports:
+        - port: 50051
+          protocol: TCP
+
+---
+
+# ── Order Service Network Policy ──────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: order-service-netpol
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: order-service
+
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Ingress থেকে HTTP traffic
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: 3003
+          protocol: TCP
+
+  egress:
+    # Order DB-তে connection
+    - to:
+        - podSelector:
+            matchLabels:
+              app: order-db
+      ports:
+        - port: 5432
+          protocol: TCP
+
+    # Redis-এ connection
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+
+    # Kafka-তে connection
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - port: 9092
+          protocol: TCP
+
+    # Auth service gRPC
+    - to:
+        - podSelector:
+            matchLabels:
+              app: auth-service
+      ports:
+        - port: 50051
+          protocol: TCP
+
+    # Product service gRPC
+    - to:
+        - podSelector:
+            matchLabels:
+              app: product-service
+      ports:
+        - port: 50052
+          protocol: TCP
+
+---
+
+# ── Redis Network Policy ──────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-netpol
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    # শুধু আমাদের services Redis-এ connect করতে পারবে
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: service
+      ports:
+        - port: 6379
+          protocol: TCP
+
+---
+
+# ── Kafka Network Policy ──────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kafka-netpol
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: kafka
+  policyTypes:
+    - Ingress
+  ingress:
+    # শুধু আমাদের services Kafka-তে connect করতে পারবে
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: service
+      ports:
+        - port: 9092
+          protocol: TCP
+    # Controller port (internal)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - port: 9094
+          protocol: TCP
+
+---
+
+# ── Database Network Policies ─────────────────────────────────────────────────
+# Auth DB: শুধু auth-service connect করতে পারবে
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: auth-db-netpol
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: auth-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: auth-service
+        - podSelector:
+            matchLabels:
+              job-type: db-migration    # Migration job allow
+      ports:
+        - port: 5432
+          protocol: TCP
+
+---
+
+# Product DB: শুধু product-service connect করতে পারবে
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: product-db-netpol
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: product-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: product-service
+        - podSelector:
+            matchLabels:
+              job-type: db-migration
+      ports:
+        - port: 5432
+          protocol: TCP
+
+---
+
+# Order DB: শুধু order-service connect করতে পারবে
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: order-db-netpol
+  namespace: ecommerce
+spec:
+  podSelector:
+    matchLabels:
+      app: order-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: order-service
+        - podSelector:
+            matchLabels:
+              job-type: db-migration
+      ports:
+        - port: 5432
+          protocol: TCP

@@ -1,7 +1,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # AUTH SERVICE
-# - min 2 pods, max 8 pods (HPA request-based scaling)
-# - Request limit exceed হলে queue-তে wait করবে (PodDisruptionBudget + rate limit)
+# - min 2 pods, max 8 pods (HPA CPU/Memory-based scaling)
+# - Zero downtime Rolling Update
+# - SecurityContext: non-root user
+# - DB Migration: আলাদা Job-এ (12-db-migration-job.yaml)
 # ─────────────────────────────────────────────────────────────────────────────
 
 apiVersion: apps/v1
@@ -14,7 +16,7 @@ metadata:
     tier: service
     version: "1.0"
 spec:
-  replicas: 2                   # ── initial 2 pods
+  replicas: 2                   # HPA এর সাথে কাজ করবে (initial 2 pods)
   selector:
     matchLabels:
       app: auth-service
@@ -30,6 +32,7 @@ spec:
         tier: service
         version: "1.0"
       annotations:
+        # Prometheus metrics scraping
         prometheus.io/scrape: "true"
         prometheus.io/port: "3001"
         prometheus.io/path: "/metrics"
@@ -47,25 +50,25 @@ spec:
                       values:
                         - auth-service
                 topologyKey: kubernetes.io/hostname
-      
-      # ── Init container: DB migration আগে run করবে ──────────────────────────
-      initContainers:
-        - name: db-migrate
-          image: auth-service:1.0.0
-          command: ["sh", "-c", "npx prisma db push"]
-          envFrom:
-            - secretRef:
-                name: auth-service-secret
-          env:
-            - name: PORT
-              value: "3001"
-            - name: GRPC_PORT
-              value: "50051"
-      
+
+      # ── Pod-level Security Context ─────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001        # Node.js app non-root user
+        runAsGroup: 1001
+        fsGroup: 1001
+
+      # ── Service Account ────────────────────────────────────────────────────
+      # Specific service account ব্যবহার করুন (least privilege)
+      automountServiceAccountToken: false
+
       containers:
         - name: auth-service
           image: auth-service:1.0.0
-          imagePullPolicy: IfNotPresent
+          # Production-এ: Always (যাতে latest image সবসময় pull হয়)
+          # Local dev-এ: IfNotPresent
+          imagePullPolicy: Always
+
           ports:
             - containerPort: 3001
               name: http
@@ -73,18 +76,25 @@ spec:
             - containerPort: 50051
               name: grpc
               protocol: TCP
-          
+
+          # ── Environment Variables ──────────────────────────────────────────
           env:
             - name: PORT
               value: "3001"
             - name: GRPC_PORT
               value: "50051"
-          
+            - name: NODE_ENV
+              value: "production"
+
+          # Secrets থেকে sensitive config
           envFrom:
             - secretRef:
                 name: auth-service-secret
-          
-          # ── Resource Requests & Limits ────────────────────────────────────
+            # Non-sensitive config (optional — directly env-এ দেওয়া আছে)
+            # - configMapRef:
+            #     name: app-config
+
+          # ── Resource Requests & Limits ─────────────────────────────────────
           resources:
             requests:
               memory: "256Mi"
@@ -92,40 +102,70 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
-          
-          # ── Health Probes ─────────────────────────────────────────────────
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 3001
-            initialDelaySeconds: 30
-            periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 3
-          
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 3001
-            initialDelaySeconds: 15
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-          
+
+          # ── Health Probes ──────────────────────────────────────────────────
+
+          # startupProbe: app শুরু হওয়ার সময় চলে
+          # এটা pass করার আগে liveness/readiness check হয় না
           startupProbe:
             httpGet:
               path: /health
               port: 3001
             initialDelaySeconds: 10
             periodSeconds: 5
-            failureThreshold: 12   # 12 * 5s = 60s startup time দেওয়া হলো
-      
-      # ── Graceful termination: চলমান requests শেষ হওয়ার সুযোগ দেবে ─────────
+            failureThreshold: 15   # 75s startup window (Prisma migration সহ)
+            successThreshold: 1
+
+          # livenessProbe: app জীবিত আছে কিনা — fail হলে restart হবে
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 0    # startupProbe এর পরে শুরু হয়
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # readinessProbe: traffic পাঠানো হবে কিনা — fail হলে Service এর endpoint থেকে বাদ
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # ── Container Security ─────────────────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # ── Volume Mounts (readOnlyRootFilesystem-এর জন্য writable tmp) ───
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: app-tmp
+              mountPath: /app/tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: app-tmp
+          emptyDir: {}
+
+      # ── Graceful termination ─────────────────────────────────────────────
+      # চলমান requests শেষ হওয়ার সুযোগ দেবে
       terminationGracePeriodSeconds: 30
 
 ---
 
-# ── Auth Service — HTTP Service ───────────────────────────────────────────────
+# ── Auth Service — ClusterIP Service ─────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
@@ -133,6 +173,7 @@ metadata:
   namespace: ecommerce
   labels:
     app: auth-service
+    tier: service
 spec:
   selector:
     app: auth-service
@@ -150,8 +191,7 @@ spec:
 ---
 
 # ── HPA: Horizontal Pod Autoscaler ───────────────────────────────────────────
-# CPU > 70% হলে scale up, min=2, max=8
-# Request limit exceed হলে নতুন pod আসবে, না হলে wait (queue) করবে
+# CPU > 70% বা Memory > 80% হলে scale up
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -162,17 +202,15 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: auth-service
-  minReplicas: 2          # ── সবসময় minimum 2 pods চলবে
-  maxReplicas: 8          # ── maximum 8 pods পর্যন্ত scale হবে
+  minReplicas: 2          # সবসময় minimum 2 pods (high availability)
+  maxReplicas: 8          # maximum 8 pods পর্যন্ত scale
   metrics:
-    # ── CPU-based scaling ──────────────────────────────────────────────────
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
           averageUtilization: 70    # CPU 70% হলে scale up শুরু
-    # ── Memory-based scaling ───────────────────────────────────────────────
     - type: Resource
       resource:
         name: memory
@@ -181,7 +219,7 @@ spec:
           averageUtilization: 80    # Memory 80% হলে scale up
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 60    # 60s দেখার পরে scale up করবে
+      stabilizationWindowSeconds: 60    # 60s দেখার পরে scale up
       policies:
         - type: Pods
           value: 2                      # একবারে max 2 pod বাড়াবে
@@ -195,14 +233,15 @@ spec:
 
 ---
 
-# ── PodDisruptionBudget: Rolling update/drain এর সময় min 1 pod সচল থাকবে ──
+# ── PodDisruptionBudget ───────────────────────────────────────────────────────
+# Rolling update বা node drain-এর সময় minimum 1 pod সচল থাকবে
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: auth-service-pdb
   namespace: ecommerce
 spec:
-  minAvailable: 1
+  minAvailable: 1    # 2 pods-এর মধ্যে min 1 সবসময় সচল
   selector:
     matchLabels:
       app: auth-service

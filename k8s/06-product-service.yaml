@@ -1,7 +1,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # PRODUCT SERVICE
-# - min 3 pods, max 10 pods (HPA request-based scaling)
-# - Request limit exceed হলে queue-তে wait করবে
+# - min 3 pods, max 10 pods (HPA CPU/Memory-based scaling)
+# - Product service সবচেয়ে বেশি traffic পায় → বেশি replicas
+# - SecurityContext: non-root user
 # ─────────────────────────────────────────────────────────────────────────────
 
 apiVersion: apps/v1
@@ -14,14 +15,14 @@ metadata:
     tier: service
     version: "1.0"
 spec:
-  replicas: 3                   # ── initial 3 pods
+  replicas: 3                   # initial 3 pods
   selector:
     matchLabels:
       app: product-service
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 2               # scale up এর সময় 2 নতুন pod
+      maxSurge: 2               # scale up এর সময় 2 নতুন pod একসাথে
       maxUnavailable: 0         # zero downtime
   template:
     metadata:
@@ -34,7 +35,7 @@ spec:
         prometheus.io/port: "3002"
         prometheus.io/path: "/metrics"
     spec:
-      # ── Pod anti-affinity: pods আলাদা nodes-এ spread করবে ───────────────
+      # ── Pod Anti-Affinity: pods আলাদা nodes-এ spread করবে ───────────────
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -47,25 +48,21 @@ spec:
                       values:
                         - product-service
                 topologyKey: kubernetes.io/hostname
-      
-      # ── Init container: DB migration ──────────────────────────────────────
-      initContainers:
-        - name: db-migrate
-          image: product-service:1.0.0
-          command: ["sh", "-c", "npx prisma db push"]
-          envFrom:
-            - secretRef:
-                name: product-service-secret
-          env:
-            - name: PORT
-              value: "3002"
-            - name: GRPC_PORT
-              value: "50052"
-      
+
+      # ── Pod-level Security Context ─────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+
+      automountServiceAccountToken: false
+
       containers:
         - name: product-service
           image: product-service:1.0.0
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
+
           ports:
             - containerPort: 3002
               name: http
@@ -73,18 +70,20 @@ spec:
             - containerPort: 50052
               name: grpc
               protocol: TCP
-          
+
           env:
             - name: PORT
               value: "3002"
             - name: GRPC_PORT
               value: "50052"
-          
+            - name: NODE_ENV
+              value: "production"
+
           envFrom:
             - secretRef:
                 name: product-service-secret
-          
-          # ── Resource Requests & Limits ────────────────────────────────────
+
+          # ── Resource Requests & Limits ─────────────────────────────────────
           resources:
             requests:
               memory: "256Mi"
@@ -92,34 +91,57 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "600m"
-          
-          # ── Health Probes ─────────────────────────────────────────────────
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 3002
-            initialDelaySeconds: 30
-            periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 3
-          
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 3002
-            initialDelaySeconds: 15
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-          
+
+          # ── Health Probes ──────────────────────────────────────────────────
           startupProbe:
             httpGet:
               path: /health
               port: 3002
             initialDelaySeconds: 10
             periodSeconds: 5
-            failureThreshold: 12
-      
+            failureThreshold: 15   # 75s startup window
+            successThreshold: 1
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3002
+            initialDelaySeconds: 0
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3002
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # ── Container Security ─────────────────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: app-tmp
+              mountPath: /app/tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: app-tmp
+          emptyDir: {}
+
       terminationGracePeriodSeconds: 30
 
 ---
@@ -132,6 +154,7 @@ metadata:
   namespace: ecommerce
   labels:
     app: product-service
+    tier: service
 spec:
   selector:
     app: product-service
@@ -159,8 +182,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: product-service
-  minReplicas: 3          # ── সবসময় minimum 3 pods
-  maxReplicas: 10         # ── maximum 10 pods
+  minReplicas: 3          # সবসময় minimum 3 pods
+  maxReplicas: 10         # maximum 10 pods
   metrics:
     - type: Resource
       resource:

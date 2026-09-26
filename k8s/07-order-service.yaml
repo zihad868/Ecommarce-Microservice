@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # ORDER SERVICE
-# - min 1 pod, max 8 pods (HPA request-based scaling)
-# - Request limit exceed হলে queue-তে wait করবে
+# - min 2 pods, max 8 pods (HPA CPU/Memory-based scaling)
+# - SecurityContext: non-root user
 # ─────────────────────────────────────────────────────────────────────────────
 
 apiVersion: apps/v1
@@ -14,7 +14,7 @@ metadata:
     tier: service
     version: "1.0"
 spec:
-  replicas: 1                   # ── initial 1 pod
+  replicas: 2                   # initial 2 pods (1 থেকে বাড়ানো হয়েছে — HA এর জন্য)
   selector:
     matchLabels:
       app: order-service
@@ -34,6 +34,7 @@ spec:
         prometheus.io/port: "3003"
         prometheus.io/path: "/metrics"
     spec:
+      # ── Pod Anti-Affinity ─────────────────────────────────────────────────
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -46,25 +47,21 @@ spec:
                       values:
                         - order-service
                 topologyKey: kubernetes.io/hostname
-      
-      # ── Init container: DB migration ──────────────────────────────────────
-      initContainers:
-        - name: db-migrate
-          image: order-service:1.0.0
-          command: ["sh", "-c", "npx prisma db push"]
-          envFrom:
-            - secretRef:
-                name: order-service-secret
-          env:
-            - name: PORT
-              value: "3003"
-            - name: GRPC_PORT
-              value: "50053"
-      
+
+      # ── Pod-level Security Context ─────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+
+      automountServiceAccountToken: false
+
       containers:
         - name: order-service
           image: order-service:1.0.0
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
+
           ports:
             - containerPort: 3003
               name: http
@@ -72,18 +69,20 @@ spec:
             - containerPort: 50053
               name: grpc
               protocol: TCP
-          
+
           env:
             - name: PORT
               value: "3003"
             - name: GRPC_PORT
               value: "50053"
-          
+            - name: NODE_ENV
+              value: "production"
+
           envFrom:
             - secretRef:
                 name: order-service-secret
-          
-          # ── Resource Requests & Limits ────────────────────────────────────
+
+          # ── Resource Requests & Limits ─────────────────────────────────────
           resources:
             requests:
               memory: "256Mi"
@@ -91,34 +90,57 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
-          
-          # ── Health Probes ─────────────────────────────────────────────────
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 3003
-            initialDelaySeconds: 30
-            periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 3
-          
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 3003
-            initialDelaySeconds: 15
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-          
+
+          # ── Health Probes ──────────────────────────────────────────────────
           startupProbe:
             httpGet:
               path: /health
               port: 3003
             initialDelaySeconds: 10
             periodSeconds: 5
-            failureThreshold: 12
-      
+            failureThreshold: 15   # 75s startup window
+            successThreshold: 1
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3003
+            initialDelaySeconds: 0
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3003
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # ── Container Security ─────────────────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: app-tmp
+              mountPath: /app/tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: app-tmp
+          emptyDir: {}
+
       terminationGracePeriodSeconds: 30
 
 ---
@@ -131,6 +153,7 @@ metadata:
   namespace: ecommerce
   labels:
     app: order-service
+    tier: service
 spec:
   selector:
     app: order-service
@@ -147,7 +170,7 @@ spec:
 
 ---
 
-# ── HPA: min=1, max=8 ────────────────────────────────────────────────────────
+# ── HPA: min=2, max=8 ────────────────────────────────────────────────────────
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -158,8 +181,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: order-service
-  minReplicas: 1          # ── minimum 1 pod
-  maxReplicas: 8          # ── maximum 8 pods
+  minReplicas: 2          # 1 থেকে 2 বাড়ানো হয়েছে (single pod = single point of failure!)
+  maxReplicas: 8
   metrics:
     - type: Resource
       resource:
@@ -196,7 +219,7 @@ metadata:
   name: order-service-pdb
   namespace: ecommerce
 spec:
-  minAvailable: 1
+  minAvailable: 1    # 2 pods-এর মধ্যে min 1 সবসময় সচল
   selector:
     matchLabels:
       app: order-service

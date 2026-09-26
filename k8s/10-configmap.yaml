@@ -1,0 +1,85 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGMAP — Non-sensitive configuration values
+# Port, timeout, feature flags → এখানে রাখুন
+# Secrets (password, API keys) → 01-secrets.yaml-এ রাখুন
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Shared Application Config ─────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: ecommerce
+  labels:
+    tier: config
+data:
+  # ── Service Ports ──────────────────────────────────────────────────────────
+  AUTH_SERVICE_PORT: "3001"
+  AUTH_SERVICE_GRPC_PORT: "50051"
+  PRODUCT_SERVICE_PORT: "3002"
+  PRODUCT_SERVICE_GRPC_PORT: "50052"
+  ORDER_SERVICE_PORT: "3003"
+  ORDER_SERVICE_GRPC_PORT: "50053"
+
+  # ── Service Discovery (K8s internal DNS) ──────────────────────────────────
+  # Format: <service-name>.<namespace>.svc.cluster.local
+  AUTH_GRPC_URL: "auth-service.ecommerce.svc.cluster.local:50051"
+  PRODUCT_GRPC_URL: "product-service.ecommerce.svc.cluster.local:50052"
+  KAFKA_BROKER: "kafka-service.ecommerce.svc.cluster.local:9092"
+  REDIS_HOST: "redis-service.ecommerce.svc.cluster.local"
+  REDIS_PORT: "6379"
+
+  # ── Node Environment ────────────────────────────────────────────────────────
+  NODE_ENV: "production"
+
+  # ── Logging ─────────────────────────────────────────────────────────────────
+  LOG_LEVEL: "info"
+
+---
+
+# ── Redis Config ──────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: ecommerce
+  labels:
+    app: redis
+    tier: config
+data:
+  redis.conf: |
+    # Memory management
+    maxmemory 512mb
+    maxmemory-policy allkeys-lru
+
+    # Persistence (AOF)
+    appendonly yes
+    appendfsync everysec
+
+    # Performance
+    hz 10
+    dynamic-hz yes
+
+    # Security (password নিচে Secret-এ রাখুন, এখানে config শুধু)
+    protected-mode yes
+
+    # Slow log
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+
+---
+
+# ── PostgreSQL Config ─────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: ecommerce
+  labels:
+    tier: config
+data:
+  POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=en_US.UTF-8"
+  # Connection pool settings (Prisma এর জন্য)
+  DB_POOL_MIN: "2"
+  DB_POOL_MAX: "10"
+  DB_CONNECTION_TIMEOUT: "5000"

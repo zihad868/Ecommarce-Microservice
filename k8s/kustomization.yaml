@@ -1,19 +1,37 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# ── Target Namespace ─────────────────────────────────────────────────────────
 namespace: ecommerce
+
+# ── Resources (apply order matters!) ─────────────────────────────────────────
+# ⚠️ 01-secrets.yaml is intentionally excluded from here.
+# Apply secrets separately and securely (do NOT commit to git!):
+#   kubectl apply -f k8s/01-secrets.yaml
+#
+# ⚠️ 09-cluster-autoscaler.yaml is for kube-system namespace,
+#   apply separately: kubectl apply -f k8s/09-cluster-autoscaler.yaml
+#
+# ⚠️ 12-db-migration-job.yaml must run BEFORE services:
+#   kubectl apply -f k8s/12-db-migration-job.yaml
+#   kubectl wait --for=condition=complete job/auth-db-migration -n ecommerce --timeout=300s
+#   kubectl wait --for=condition=complete job/product-db-migration -n ecommerce --timeout=300s
+#   kubectl wait --for=condition=complete job/order-db-migration -n ecommerce --timeout=300s
 
 resources:
   - 00-namespace.yaml
-  - 02-redis.yaml
-  - 03-kafka.yaml
-  - 04-databases.yaml
-  - 05-auth-service.yaml
+  - 10-configmap.yaml       # ConfigMap (secrets-এর আগে)
+  - 02-redis.yaml           # Cache (infrastructure আগে)
+  - 03-kafka.yaml           # Message broker
+  - 04-databases.yaml       # Databases
+  - 05-auth-service.yaml    # Auth (অন্য services-এর আগে)
   - 06-product-service.yaml
   - 07-order-service.yaml
-  - 08-ingress.yaml
+  - 11-network-policy.yaml  # Security (সব কিছুর পরে)
+  - 08-ingress.yaml         # Ingress (সবার শেষে)
 
-# Set these three newName values to the immutable image repositories used by CI/CD.
+# ── Image Substitution (CI/CD pipeline এ override করুন) ─────────────────────
+# CI/CD pipeline-এ: kustomize edit set image auth-service=<ECR_URL>:<TAG>
 images:
   - name: auth-service
     newName: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/auth-service
@@ -24,3 +42,13 @@ images:
   - name: order-service
     newName: YOUR_AWS_ACCOUNT_ID.dkr.ecr.YOUR_REGION.amazonaws.com/order-service
     newTag: "1.0.0"
+
+# ── Common Labels (সব resources-এ automatically যোগ হবে) ────────────────────
+commonLabels:
+  managed-by: kustomize
+  project: ecommerce-microservice
+
+# ── Common Annotations ────────────────────────────────────────────────────────
+commonAnnotations:
+  contact: "your-team@yourdomain.com"
+  repository: "https://github.com/your-org/ecommerce-microservice"

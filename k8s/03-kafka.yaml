@@ -1,6 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# KAFKA — KRaft mode (no Zookeeper), single broker for production
-# Production এ MSK (Amazon Managed Streaming for Kafka) ব্যবহার recommend করা হয়
+# KAFKA — KRaft mode (no Zookeeper), Single broker
+#
+# Production Recommendation:
+#   AWS MSK (Managed Streaming for Kafka) ব্যবহার করুন:
+#   - Managed service → operation overhead নেই
+#   - Multi-AZ replication → high availability
+#   - এই StatefulSet শুধু self-managed/staging এর জন্য
 # ─────────────────────────────────────────────────────────────────────────────
 
 apiVersion: apps/v1
@@ -11,6 +16,7 @@ metadata:
   labels:
     app: kafka
     tier: messaging
+    version: "7.6.0"
 spec:
   serviceName: kafka-headless
   replicas: 1
@@ -22,18 +28,59 @@ spec:
       labels:
         app: kafka
         tier: messaging
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"    # JMX exporter port
     spec:
+      # ── Security Context ─────────────────────────────────────────────────
+      securityContext:
+        runAsNonRoot: false   # Kafka official image root চায়
+        fsGroup: 1000
+
+      # ── Init Container: KRaft storage format করা ─────────────────────────
+      # প্রথমবার start হলে kafka-storage format চালাতে হয়
+      initContainers:
+        - name: kafka-init
+          image: confluentinc/cp-kafka:7.6.0
+          command:
+            - sh
+            - -c
+            - |
+              # storage dir empty থাকলে format করো
+              if [ ! -f /var/lib/kafka/data/meta.properties ]; then
+                echo "Formatting Kafka KRaft storage..."
+                kafka-storage format \
+                  --config /etc/kafka/kraft/server.properties \
+                  --cluster-id MkU3OEVBNTcwNTJENDM2Qk \
+                  --ignore-formatted
+              else
+                echo "Kafka storage already formatted, skipping..."
+              fi
+          env:
+            - name: KAFKA_LOG_DIRS
+              value: "/var/lib/kafka/data"
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+
       containers:
         - name: kafka
           image: confluentinc/cp-kafka:7.6.0
+          imagePullPolicy: IfNotPresent
+
           ports:
             - containerPort: 9092
               name: plaintext
+              protocol: TCP
             - containerPort: 9093
               name: external
+              protocol: TCP
             - containerPort: 9094
               name: controller
+              protocol: TCP
+
           env:
+            # ── KRaft Configuration ──────────────────────────────────────
             - name: CLUSTER_ID
               value: "MkU3OEVBNTcwNTJENDM2Qk"
             - name: KAFKA_NODE_ID
@@ -42,26 +89,55 @@ spec:
               value: "broker,controller"
             - name: KAFKA_CONTROLLER_QUORUM_VOTERS
               value: "1@kafka-0.kafka-headless.ecommerce.svc.cluster.local:9094"
+
+            # ── Listeners ────────────────────────────────────────────────
             - name: KAFKA_LISTENERS
               value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9094,EXTERNAL://0.0.0.0:9093"
             - name: KAFKA_ADVERTISED_LISTENERS
-              value: "PLAINTEXT://kafka-service:9092,EXTERNAL://localhost:9093"
+              value: "PLAINTEXT://kafka-service.ecommerce.svc.cluster.local:9092,EXTERNAL://localhost:9093"
             - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
               value: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
             - name: KAFKA_CONTROLLER_LISTENER_NAMES
               value: "CONTROLLER"
             - name: KAFKA_INTER_BROKER_LISTENER_NAME
               value: "PLAINTEXT"
+
+            # ── Topic / Replication Settings ──────────────────────────────
             - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
               value: "1"
             - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
               value: "1"
             - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
               value: "1"
+
+            # ── Topic Auto Creation (production-এ false রাখুন!) ───────────
+            # Production-এ topics manually create করুন
             - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
-              value: "true"
+              value: "false"
+
+            # ── Log Dirs ─────────────────────────────────────────────────
             - name: KAFKA_LOG_DIRS
               value: "/var/lib/kafka/data"
+
+            # ── Performance Tuning ────────────────────────────────────────
+            - name: KAFKA_NUM_NETWORK_THREADS
+              value: "3"
+            - name: KAFKA_NUM_IO_THREADS
+              value: "8"
+            - name: KAFKA_SOCKET_SEND_BUFFER_BYTES
+              value: "102400"
+            - name: KAFKA_SOCKET_RECEIVE_BUFFER_BYTES
+              value: "102400"
+            - name: KAFKA_SOCKET_REQUEST_MAX_BYTES
+              value: "104857600"
+
+            # ── Log Retention (7 days) ────────────────────────────────────
+            - name: KAFKA_LOG_RETENTION_HOURS
+              value: "168"
+            - name: KAFKA_LOG_SEGMENT_BYTES
+              value: "1073741824"
+
+          # ── Resource Requests & Limits ─────────────────────────────────
           resources:
             requests:
               memory: "512Mi"
@@ -69,19 +145,23 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "500m"
+
           volumeMounts:
             - name: kafka-data
               mountPath: /var/lib/kafka/data
+
+          # ── Health Probes ─────────────────────────────────────────────
           livenessProbe:
             exec:
               command:
                 - kafka-broker-api-versions
                 - "--bootstrap-server"
                 - "localhost:9092"
-            initialDelaySeconds: 45
-            periodSeconds: 15
+            initialDelaySeconds: 60    # Kafka startup slow হয়
+            periodSeconds: 20
             timeoutSeconds: 10
             failureThreshold: 5
+
           readinessProbe:
             exec:
               command:
@@ -92,9 +172,29 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 10
             failureThreshold: 5
+
+          startupProbe:
+            exec:
+              command:
+                - kafka-broker-api-versions
+                - "--bootstrap-server"
+                - "localhost:9092"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 15    # 150s startup window
+
+          # ── Container Security ────────────────────────────────────────
+          securityContext:
+            allowPrivilegeEscalation: false
+
+      terminationGracePeriodSeconds: 60   # Kafka graceful shutdown নিতে সময় লাগে
+
+  # ── Persistent Volume Claim Template ─────────────────────────────────────
   volumeClaimTemplates:
     - metadata:
         name: kafka-data
+        labels:
+          app: kafka
       spec:
         accessModes: ["ReadWriteOnce"]
         storageClassName: gp2
@@ -104,7 +204,8 @@ spec:
 
 ---
 
-# ── Headless Service for StatefulSet internal DNS ─────────────────────────────
+# ── Kafka Headless Service (StatefulSet internal DNS) ─────────────────────────
+# kafka-0.kafka-headless.ecommerce.svc.cluster.local → pod-এর direct access
 apiVersion: v1
 kind: Service
 metadata:
@@ -113,7 +214,8 @@ metadata:
   labels:
     app: kafka
 spec:
-  clusterIP: None
+  clusterIP: None    # Headless → no load balancing, direct pod DNS
+  publishNotReadyAddresses: true    # Controller quorum জন্য দরকার
   selector:
     app: kafka
   ports:
@@ -124,7 +226,7 @@ spec:
 
 ---
 
-# ── Regular Service for application access ────────────────────────────────────
+# ── Kafka Service (Application access) ───────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
@@ -132,6 +234,7 @@ metadata:
   namespace: ecommerce
   labels:
     app: kafka
+    tier: messaging
 spec:
   selector:
     app: kafka
@@ -139,4 +242,5 @@ spec:
     - port: 9092
       targetPort: 9092
       name: plaintext
+      protocol: TCP
   type: ClusterIP
