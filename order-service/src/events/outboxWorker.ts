@@ -2,6 +2,8 @@ import { ORDER_CREATED_TOPIC } from '@ecommerce/common';
 import prisma from '../utils/prismaClient';
 import { getKafkaProducer, publishEvent } from './kafka';
 
+import { OutboxStatus } from '../utils/prismaClient';
+
 let isRunning = false;
 let timerId: NodeJS.Timeout | null = null;
 
@@ -14,7 +16,7 @@ export const processOutboxEvents = async (): Promise<number> => {
 
   // Fetch oldest unpublished events
   const pendingEvents = await prisma.outboxEvent.findMany({
-    where: { published: false },
+    where: { status: OutboxStatus.PENDING },
     orderBy: { createdAt: 'asc' },
     take: 20,
   });
@@ -34,7 +36,8 @@ export const processOutboxEvents = async (): Promise<number> => {
       await prisma.outboxEvent.update({
         where: { id: event.id },
         data: {
-          published: true,
+          status: OutboxStatus.PUBLISHED,
+          publishedAt: new Date(),
           updatedAt: new Date(),
         },
       });
@@ -48,6 +51,7 @@ export const processOutboxEvents = async (): Promise<number> => {
         where: { id: event.id },
         data: {
           retryCount: { increment: 1 },
+          lastError: errMsg,
           updatedAt: new Date(),
         },
       });

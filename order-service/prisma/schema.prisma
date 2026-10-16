@@ -22,11 +22,12 @@ model Order {
   userId         String
   totalAmount    Decimal       @db.Decimal(12, 2)
   status         OrderStatus   @default(PENDING)
-  idempotencyKey String?       @unique
+  idempotencyKey String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   items          OrderItem[]
 
+  @@unique([userId, idempotencyKey])
   @@index([userId])
   @@index([status])
   @@index([createdAt])
@@ -52,27 +53,30 @@ enum OutboxStatus {
 }
 
 model OutboxEvent {
-  id          String        @id @default(cuid())
-  aggregateId String
-  eventType   String
-  payload     Json
-  published   Boolean       @default(false)  // kept for backward compat
-  status      OutboxStatus  @default(PENDING)
-  retryCount  Int           @default(0)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id            String        @id @default(cuid())
+  aggregateId   String
+  eventType     String
+  payload       Json
+  status        OutboxStatus  @default(PENDING)
+  retryCount    Int           @default(0)
+  lastError     String?
+  nextAttemptAt DateTime      @default(now())
+  publishedAt   DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
-  @@index([status, createdAt])
-  @@index([published, createdAt])
+  @@index([status, nextAttemptAt])
 }
 
 model IdempotencyRecord {
-  key        String   // NOT @id — composite unique below
-  userId     String
-  statusCode Int
-  response   Json
-  createdAt  DateTime @default(now())
+  userId      String
+  key         String
+  requestHash String
+  statusCode  Int
+  response    Json
+  createdAt   DateTime @default(now())
 
-  @@id([key, userId])        // composite PK scopes key to user
+  @@id([userId, key])
   @@index([userId, createdAt])
 }
+

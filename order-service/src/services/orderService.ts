@@ -20,7 +20,7 @@ export const createOrder = async (
   // 1. Idempotency Key check — scoped to userId to prevent cross-user leakage
   if (idempotencyKey) {
     const existing = await prisma.idempotencyRecord.findUnique({
-      where: { key_userId: { key: idempotencyKey, userId } },
+      where: { userId_key: { userId, key: idempotencyKey } },
     });
     if (existing) {
       logger.info({ idempotencyKey, userId }, 'Returning cached order for idempotency key');
@@ -119,7 +119,6 @@ export const createOrder = async (
           aggregateId: order.id,
           eventType: 'OrderCreated',
           payload: eventPayload,
-          published: false,
         },
       });
 
@@ -128,6 +127,7 @@ export const createOrder = async (
           data: {
             key: idempotencyKey,
             userId,
+            requestHash: '',
             statusCode: 201,
             response: order,
           },
@@ -151,7 +151,7 @@ export const createOrder = async (
         'Concurrent idempotency race detected, returning stored result',
       );
       const existing = await prisma.idempotencyRecord.findUnique({
-        where: { key_userId: { key: idempotencyKey, userId } },
+        where: { userId_key: { userId, key: idempotencyKey } },
       });
       if (existing) return existing.response as unknown as Order;
     }

@@ -8,6 +8,7 @@ export {
   OrderItem,
   OrderStatus,
   OutboxEvent,
+  OutboxStatus,
   Prisma,
 } from '../generated/client';
 export { PrismaClient };
