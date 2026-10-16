@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { startGrpcServer } from './grpc/authServer';
@@ -46,6 +46,18 @@ startGrpcServer();
 app.use('/api/auth', authLimiter, authRoutes);
 
 app.use(errorHandler);
+
+// ── 404 Not Found ──────────────────────────────────────────
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.status(404).json({
+    success: false,
+    message: 'API NOT FOUND!',
+    error: {
+      path: req.originalUrl,
+      message: 'Your requested path is not found!',
+    },
+  });
+});
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Auth Service REST API running on port ${PORT}`));

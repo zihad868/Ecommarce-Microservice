@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import express from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { startGrpcServer } from './grpc/productServer';
@@ -51,6 +51,18 @@ process.on('SIGINT',  () => void shutdown());
 app.use('/api/products', productRoutes);
 
 app.use(errorHandler);
+
+// ── 404 Not Found ──────────────────────────────────────────
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.status(404).json({
+    success: false,
+    message: 'API NOT FOUND!',
+    error: {
+      path: req.originalUrl,
+      message: 'Your requested path is not found!',
+    },
+  });
+});
 
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => console.log(`Product Service REST API running on port ${PORT}`));
