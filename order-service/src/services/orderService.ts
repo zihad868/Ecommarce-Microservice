@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
+import httpStatus from 'http-status';
 import { getProductDetails } from '../grpc/grpcClients';
 import { publishEvent } from '../events/kafka';
+import ApiError from '../errors/ApiError';
 
 const prisma = new PrismaClient();
 
@@ -18,11 +20,11 @@ export const createOrder = async (userId: string, items: OrderItemInput[]) => {
     const productResponse = await getProductDetails(item.productId);
 
     if (!productResponse.success) {
-      throw new Error(`Product ${item.productId} not found`);
+      throw new ApiError(httpStatus.NOT_FOUND, `Product ${item.productId} not found`);
     }
 
     if (productResponse.stock < item.quantity) {
-      throw new Error(`Insufficient stock for product ${productResponse.name}`);
+      throw new ApiError(httpStatus.BAD_REQUEST, `Insufficient stock for product ${productResponse.name}`);
     }
 
     totalAmount += productResponse.price * item.quantity;

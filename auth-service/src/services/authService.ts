@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
+import httpStatus from 'http-status';
 import { getRedisClient } from '../utils/redisClient';
 import ApiError from '../errors/ApiError';
 
@@ -16,6 +17,13 @@ export interface CachedUser {
 }
 
 export const registerUser = async (email: string, password: string) => {
+  if (!email) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Email is required');
+  }
+  if (!password) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Password is required');
+  }
+
   let user = await prisma.user.findUnique({ where: { email } });
   if (user) {
     throw new ApiError(httpStatus.BAD_REQUEST, 'User already exists');
@@ -43,14 +51,21 @@ export const registerUser = async (email: string, password: string) => {
 };
 
 export const loginUser = async (email: string, password: string) => {
+  if (!email) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Email is required');
+  }
+  if (!password) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Password is required');
+  }
+
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
-    throw new Error('Invalid credentials');
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Invalid credentials');
   }
 
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) {
-    throw new Error('Invalid credentials');
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Invalid credentials');
   }
 
   const token = jwt.sign(
