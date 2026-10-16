@@ -1,0 +1,291 @@
+openapi: 3.0.3
+info:
+  title: Production E-Commerce Microservices API
+  version: 1.0.0
+  description: >
+    Production-grade enterprise e-commerce backend built with Express 5, TypeScript,
+    Prisma, PostgreSQL, Redis, Kafka, and gRPC.
+servers:
+  - url: http://localhost:3000
+    description: Ingress / API Gateway
+  - url: http://localhost:3001
+    description: Auth Service (Direct Dev Port)
+  - url: http://localhost:3002
+    description: Product Service (Direct Dev Port)
+  - url: http://localhost:3003
+    description: Order Service (Direct Dev Port)
+
+paths:
+  # ── Auth Endpoints ──────────────────────────────────────────
+  /api/auth/register:
+    post:
+      summary: Register a new user
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  example: Password123!
+                role:
+                  type: string
+                  enum: [USER, ADMIN]
+                  default: USER
+      responses:
+        201:
+          description: User registered successfully
+        400:
+          description: Validation error or weak password
+        409:
+          description: Email already in use
+
+  /api/auth/login:
+    post:
+      summary: Authenticate user & receive JWT tokens
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  example: Password123!
+      responses:
+        200:
+          description: Login successful, returns access & refresh tokens
+        401:
+          description: Invalid email or password
+
+  /api/auth/refresh:
+    post:
+      summary: Rotate refresh token & get new access token
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        200:
+          description: Token pair refreshed
+        401:
+          description: Invalid or revoked refresh token (reuse detected)
+
+  /api/auth/logout:
+    post:
+      summary: Revoke refresh token and invalidate sessions
+      tags: [Auth]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        200:
+          description: Logged out successfully
+
+  # ── Product Endpoints ───────────────────────────────────────
+  /api/products:
+    get:
+      summary: List products with pagination, filtering & versioned caching
+      tags: [Products]
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+            default: 10
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: minPrice
+          in: query
+          schema:
+            type: number
+        - name: maxPrice
+          in: query
+          schema:
+            type: number
+      responses:
+        200:
+          description: List of products and pagination metadata
+
+    post:
+      summary: Create a product (ADMIN only)
+      tags: [Products]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, price, stock, category]
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                price:
+                  type: number
+                  minimum: 0
+                stock:
+                  type: integer
+                  minimum: 0
+                category:
+                  type: string
+                attributes:
+                  type: object
+      responses:
+        201:
+          description: Product created
+        401:
+          description: Unauthorized
+        403:
+          description: Forbidden - Admin role required
+
+  /api/products/{id}:
+    get:
+      summary: Get product details by ID
+      tags: [Products]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Product details
+        404:
+          description: Product not found
+
+  # ── Order Endpoints ─────────────────────────────────────────
+  /api/orders:
+    post:
+      summary: Place order with idempotency & transactional outbox
+      tags: [Orders]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: idempotency-key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [productId, quantity]
+                    properties:
+                      productId:
+                        type: string
+                      quantity:
+                        type: integer
+                        minimum: 1
+                        maximum: 1000
+      responses:
+        201:
+          description: Order created
+        400:
+          description: Insufficient stock or invalid payload
+        409:
+          description: Duplicate request in-flight
+
+    get:
+      summary: List user's orders
+      tags: [Orders]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            maximum: 100
+            default: 10
+      responses:
+        200:
+          description: List of user orders
+
+  /api/orders/{id}/pay:
+    post:
+      summary: Process order payment (state machine transition)
+      tags: [Orders]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Payment succeeded, order status changed to PAID
+        400:
+          description: Illegal status transition
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
