@@ -201,26 +201,26 @@ export const deleteProduct = async (id: string): Promise<void> => {
 };
 
 /**
- * Decrements stock atomically using conditional SQL.
- * Guarantees zero oversell under concurrent order race conditions.
+ * Decrements stock atomically using conditional SQL inside an existing Prisma transaction.
+ * Call this from within a `prisma.$transaction(async (tx) => ...)` block.
  */
-export const decrementProductStock = async (
+export const decrementProductStockTx = async (
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
   productId: string,
   quantity: number,
-): Promise<Product> => {
+): Promise<void> => {
   if (quantity <= 0) {
     throw new ApiError(httpStatus.BAD_REQUEST, 'Quantity must be positive');
   }
 
-  // Atomic conditional decrement in SQL: WHERE stock >= quantity
-  const updatedCount = await prisma.$executeRaw`
+  const updatedCount = await tx.$executeRaw`
     UPDATE "Product"
     SET "stock" = "stock" - ${quantity}, "updatedAt" = NOW()
     WHERE "id" = ${productId} AND "stock" >= ${quantity}
   `;
 
   if (updatedCount === 0) {
-    const current = await prisma.product.findUnique({ where: { id: productId } });
+    const current = await tx.product.findUnique({ where: { id: productId } });
     if (!current) {
       throw new ApiError(httpStatus.NOT_FOUND, `Product ${productId} not found`);
     }
@@ -229,12 +229,16 @@ export const decrementProductStock = async (
       `Insufficient stock for product ${current.name}. Available: ${String(current.stock)}, requested: ${String(quantity)}`,
     );
   }
+};
 
-  const updated = await prisma.product.findUnique({ where: { id: productId } });
-  if (!updated) {
-    throw new ApiError(httpStatus.NOT_FOUND, 'Product not found after update');
-  }
-
+/**
+ * Standalone version — wraps decrementProductStockTx in its own transaction.
+ * Use this when you don't already have a Prisma tx context (e.g. ad-hoc admin calls).
+ * The Kafka consumer should use decrementProductStockTx directly inside its own transaction.
+ */
+export const decrementProductStock = async (productId: string, quantity: number): Promise<void> => {
+  await prisma.$transaction(async (tx) => {
+    await decrementProductStockTx(tx, productId, quantity);
+  });
   await invalidateProductCache(productId);
-  return updated;
 };

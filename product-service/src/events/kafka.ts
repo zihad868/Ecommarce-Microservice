@@ -3,10 +3,13 @@ import {
   ORDER_CREATED_DLQ_TOPIC,
   ORDER_CREATED_TOPIC,
   orderCreatedEventSchema,
+  createLogger,
 } from '@ecommerce/common';
 import config from '../config';
 import prisma from '../utils/prismaClient';
 import * as productService from '../services/productService';
+
+const logger = createLogger({ serviceName: 'product-service' });
 
 const kafka = new Kafka({
   clientId: config.KAFKA_CLIENT_ID,
@@ -44,12 +47,32 @@ const sendToDlq = async (
         },
       ],
     });
-    console.warn(
-      `[Kafka DLQ] Sent poison-pill message to ${ORDER_CREATED_DLQ_TOPIC}: ${errorReason}`,
-    );
+    logger.warn({ eventId, topic: ORDER_CREATED_DLQ_TOPIC }, 'Sent poison-pill message to DLQ');
   } catch (dlqErr) {
-    console.error('[Kafka DLQ] Failed to forward to DLQ:', dlqErr);
+    logger.error({ dlqErr }, 'Failed to forward to DLQ');
   }
+};
+
+/** Exponential backoff retry: retries up to `maxAttempts` before giving up. */
+const withRetry = async <T>(
+  fn: () => Promise<T>,
+  maxAttempts: number,
+  baseDelayMs: number,
+): Promise<T> => {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts) {
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        logger.warn({ attempt, maxAttempts, delay }, 'Retrying after transient error');
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastError;
 };
 
 export const connectKafkaConsumer = async (): Promise<void> => {
@@ -62,7 +85,7 @@ export const connectKafkaConsumer = async (): Promise<void> => {
       fromBeginning: false,
     });
 
-    console.log(`Product Service Kafka Consumer connected — listening on "${ORDER_CREATED_TOPIC}"`);
+    logger.info({ topic: ORDER_CREATED_TOPIC }, 'Product Service Kafka Consumer connected');
 
     await consumer.run({
       eachMessage: async ({ topic, partition, message }: EachMessagePayload) => {
@@ -85,49 +108,62 @@ export const connectKafkaConsumer = async (): Promise<void> => {
         }
 
         const event = parseResult.data;
-        console.log(
-          `[Kafka] Received from topic "${topic}" partition ${String(partition)}: Event ${event.eventId} for Order ${event.orderId}`,
+        logger.info(
+          { topic, partition, eventId: event.eventId, orderId: event.orderId },
+          'Kafka event received',
         );
 
-        // 2. Idempotency Check
-        const alreadyProcessed = await prisma.processedEvent.findUnique({
-          where: { eventId: event.eventId },
-        });
-
-        if (alreadyProcessed) {
-          console.log(
-            `[Kafka] Event ${event.eventId} already processed at ${alreadyProcessed.createdAt.toISOString()}. Skipping (idempotent).`,
-          );
-          return;
-        }
-
-        // 3. Process items with atomic stock decrement
+        // 2. Process with retries; DLQ only after all retries exhausted
         try {
-          for (const item of event.items) {
-            await productService.decrementProductStock(item.productId, item.quantity);
-          }
+          await withRetry(
+            async () => {
+              // Single DB transaction: idempotency check + all stock decrements + processedEvent
+              await prisma.$transaction(async (tx) => {
+                // 2a. Idempotency Check — inside transaction so concurrent deliveries are safe
+                const alreadyProcessed = await tx.processedEvent.findUnique({
+                  where: { eventId: event.eventId },
+                });
 
-          // Record event as processed
-          await prisma.processedEvent.create({
-            data: {
-              eventId: event.eventId,
-              eventType: event.eventType,
+                if (alreadyProcessed) {
+                  logger.info(
+                    { eventId: event.eventId },
+                    'Event already processed (idempotent), skipping',
+                  );
+                  return;
+                }
+
+                // 2b. Atomic stock decrements for every item — all-or-nothing
+                for (const item of event.items) {
+                  await productService.decrementProductStockTx(tx, item.productId, item.quantity);
+                }
+
+                // 2c. Mark event processed — inside the same transaction
+                await tx.processedEvent.create({
+                  data: {
+                    eventId: event.eventId,
+                    eventType: event.eventType,
+                  },
+                });
+              });
             },
-          });
+            3, // max 3 attempts
+            200, // base delay 200 ms → 200, 400, 800 ms
+          );
 
-          console.log(
-            `[Kafka] Successfully processed order ${event.orderId} and recorded event ${event.eventId}`,
+          logger.info(
+            { orderId: event.orderId, eventId: event.eventId },
+            'Kafka event processed successfully',
           );
         } catch (procErr) {
           const errMsg = procErr instanceof Error ? procErr.message : String(procErr);
-          console.error(`[Kafka] Processing failed for event ${event.eventId}:`, errMsg);
+          logger.error({ eventId: event.eventId, errMsg }, 'Processing failed after retries');
           await sendToDlq(raw, errMsg, event.eventId);
         }
       },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('Kafka Consumer connection failed, retrying in 5s...', msg);
+    logger.error({ msg }, 'Kafka Consumer connection failed, retrying in 5s...');
     setTimeout(() => {
       void connectKafkaConsumer();
     }, 5000);
@@ -137,10 +173,10 @@ export const connectKafkaConsumer = async (): Promise<void> => {
 export const disconnectKafkaConsumer = async (): Promise<void> => {
   if (consumer) {
     await consumer.disconnect();
-    console.log('Product Service Kafka Consumer disconnected');
+    logger.info('Product Service Kafka Consumer disconnected');
   }
   if (dlqProducer) {
     await dlqProducer.disconnect();
-    console.log('Product Service DLQ Producer disconnected');
+    logger.info('Product Service DLQ Producer disconnected');
   }
 };

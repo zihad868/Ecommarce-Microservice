@@ -64,13 +64,12 @@ export const registerUser = async (input: RegisterInput) => {
   }
 
   const hashedPassword = await argon2.hash(input.password);
-  const role = input.role === 'ADMIN' ? Role.ADMIN : Role.USER;
 
   const user = await prisma.user.create({
     data: {
       email,
       password: hashedPassword,
-      role,
+      role: Role.USER, // Public registration always creates USER. Admins come from seed scripts.
     },
   });
 

@@ -45,25 +45,34 @@ model OrderItem {
   @@index([productId])
 }
 
+enum OutboxStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+}
+
 model OutboxEvent {
-  id          String   @id @default(cuid())
+  id          String        @id @default(cuid())
   aggregateId String
   eventType   String
   payload     Json
-  published   Boolean  @default(false)
-  retryCount  Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  published   Boolean       @default(false)  // kept for backward compat
+  status      OutboxStatus  @default(PENDING)
+  retryCount  Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
+  @@index([status, createdAt])
   @@index([published, createdAt])
 }
 
 model IdempotencyRecord {
-  key        String   @id
+  key        String   // NOT @id — composite unique below
   userId     String
   statusCode Int
   response   Json
   createdAt  DateTime @default(now())
 
+  @@id([key, userId])        // composite PK scopes key to user
   @@index([userId, createdAt])
 }

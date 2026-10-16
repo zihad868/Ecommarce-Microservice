@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import config from '../config';
 import prisma from '../utils/prismaClient';
 
 interface JwtPayload {
@@ -11,6 +12,8 @@ interface JwtPayload {
 /**
  * Auth middleware for the auth-service itself (protects /api/auth/me).
  * Validates JWT locally and fetches user from PostgreSQL.
+ * Uses config.JWT_SECRET exclusively — no fallback. App will refuse to start
+ * without a valid secret (enforced by config/index.ts zod schema).
  */
 export const protect = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   let token: string | undefined;
@@ -25,7 +28,7 @@ export const protect = async (req: Request, res: Response, next: NextFunction): 
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET ?? 'supersecret123') as JwtPayload;
+    const decoded = jwt.verify(token, config.JWT_SECRET) as JwtPayload;
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },

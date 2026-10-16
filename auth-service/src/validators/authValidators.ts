@@ -16,7 +16,8 @@ export const registerSchema = z.object({
       passwordRegex,
       'Password must contain at least 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special character',
     ),
-  role: z.enum(['USER', 'ADMIN']).optional().default('USER'),
+  // role is intentionally NOT exposed. All public registrations are USER.
+  // Admins must be created via a seed script or an admin-only internal endpoint.
 });
 
 export const loginSchema = z.object({
