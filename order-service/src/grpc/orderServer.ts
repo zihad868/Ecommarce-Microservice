@@ -1,9 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma, { type Order } from '../utils/prismaClient';
 
 const PROTO_PATH = path.join(__dirname, '../../../protos/order.proto');
 const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
@@ -42,7 +40,7 @@ interface UserOrdersResponse {
 
 const getOrder = async (
   call: grpc.ServerUnaryCall<OrderRequest, OrderResponse>,
-  callback: grpc.sendUnaryData<OrderResponse>
+  callback: grpc.sendUnaryData<OrderResponse>,
 ): Promise<void> => {
   try {
     const { orderId } = call.request;
@@ -87,7 +85,7 @@ const getOrder = async (
 
 const getOrdersByUser = async (
   call: grpc.ServerUnaryCall<UserOrdersRequest, UserOrdersResponse>,
-  callback: grpc.sendUnaryData<UserOrdersResponse>
+  callback: grpc.sendUnaryData<UserOrdersResponse>,
 ): Promise<void> => {
   try {
     const { userId } = call.request;
@@ -99,7 +97,7 @@ const getOrdersByUser = async (
 
     callback(null, {
       success: true,
-      orders: orders.map((o) => ({
+      orders: orders.map((o: Order) => ({
         success: true,
         id: o.id,
         userId: o.userId,
@@ -127,20 +125,20 @@ export const startGrpcServer = (): void => {
   });
 
   server.addService(orderProto.order.OrderService.service, {
-    GetOrder: getOrder,
-    GetOrdersByUser: getOrdersByUser,
+    GetOrder: (call: any, callback: any) => {
+      void getOrder(call, callback);
+    },
+    GetOrdersByUser: (call: any, callback: any) => {
+      void getOrdersByUser(call, callback);
+    },
   });
 
-  const port = process.env.GRPC_PORT || 50053;
-  server.bindAsync(
-    `0.0.0.0:${port}`,
-    grpc.ServerCredentials.createInsecure(),
-    (err, boundPort) => {
-      if (err) {
-        console.error('Failed to bind Order gRPC server:', err);
-        return;
-      }
-      console.log(`Order gRPC Server running on port ${boundPort}`);
+  const port = process.env.GRPC_PORT ?? '50053';
+  server.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), (err, boundPort) => {
+    if (err) {
+      console.error('Failed to bind Order gRPC server:', err);
+      return;
     }
-  );
+    console.log(`Order gRPC Server running on port ${String(boundPort)}`);
+  });
 };

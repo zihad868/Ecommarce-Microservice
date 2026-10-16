@@ -1,6 +1,6 @@
 import prisma from '../utils/prismaClient';
 import { getRedisClient } from '../utils/redisClient';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '../utils/prismaClient';
 
 // Cache TTL: 10 minutes for individual products
 const PRODUCT_CACHE_TTL = 600;
@@ -19,7 +19,7 @@ export const createProduct = async (data: any) => {
       price: data.price,
       stock: data.stock,
       category: data.category,
-      attributes: data.attributes || {},
+      attributes: (data.attributes as object | undefined) ?? {},
     },
   });
 
@@ -41,15 +41,7 @@ export const getProducts = async (query: Record<string, string | undefined>) => 
     return JSON.parse(cached);
   }
 
-  const {
-    page = '1',
-    limit = '10',
-    sort,
-    search,
-    category,
-    minPrice,
-    maxPrice,
-  } = query;
+  const { page = '1', limit = '10', sort, search, category, minPrice, maxPrice } = query;
 
   const skip = (Number(page) - 1) * Number(limit);
   const take = Number(limit);
@@ -180,7 +172,7 @@ export const decrementProductStock = async (id: string, decrementBy: number) => 
   // Invalidate Redis product cache since stock has changed
   const redis = getRedisClient();
   await redis.del(`product:${id}`);
-  
+
   // Note: List caches should probably be invalidated in the caller if needed
   return product;
 };

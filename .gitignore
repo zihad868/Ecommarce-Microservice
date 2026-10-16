@@ -103,3 +103,10 @@ dist
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Prisma generated clients
+**/src/generated/**
+**/.prisma/**
+
+# Kubernetes secrets (contains sensitive credentials)
+k8s/01-secrets.yaml

@@ -1,10 +1,8 @@
-import { PrismaClient } from '@prisma/client';
+import prisma from '../utils/prismaClient';
 import httpStatus from 'http-status';
 import { getProductDetails } from '../grpc/grpcClients';
 import { publishEvent } from '../events/kafka';
 import ApiError from '../errors/ApiError';
-
-const prisma = new PrismaClient();
 
 export interface OrderItemInput {
   productId: string;
@@ -24,13 +22,16 @@ export const createOrder = async (userId: string, items: OrderItemInput[]) => {
     }
 
     if (productResponse.stock < item.quantity) {
-      throw new ApiError(httpStatus.BAD_REQUEST, `Insufficient stock for product ${productResponse.name}`);
+      throw new ApiError(
+        httpStatus.BAD_REQUEST,
+        `Insufficient stock for product ${productResponse.name}`,
+      );
     }
 
     totalAmount += productResponse.price * item.quantity;
     validatedItems.push({
-      productId: String(item.productId),
-      quantity: Number(item.quantity),
+      productId: item.productId,
+      quantity: item.quantity,
       price: productResponse.price,
     });
   }

@@ -1,11 +1,9 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../utils/prismaClient';
 import httpStatus from 'http-status';
 import { getRedisClient } from '../utils/redisClient';
 import ApiError from '../errors/ApiError';
-
-const prisma = new PrismaClient();
 
 // Cache TTL: 5 minutes
 const USER_CACHE_TTL = 300;
@@ -17,11 +15,8 @@ export interface CachedUser {
 }
 
 export const registerUser = async (email: string, password: string) => {
-  if (!email) {
-    throw new ApiError(httpStatus.BAD_REQUEST, 'Email is required');
-  }
-  if (!password) {
-    throw new ApiError(httpStatus.BAD_REQUEST, 'Password is required');
+  if (!email || !password) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Email and password are required');
   }
 
   let user = await prisma.user.findUnique({ where: { email } });
@@ -36,11 +31,9 @@ export const registerUser = async (email: string, password: string) => {
     data: { email, password: hashedPassword },
   });
 
-  const token = jwt.sign(
-    { id: user.id },
-    process.env.JWT_SECRET || 'supersecret123',
-    { expiresIn: '1d' }
-  );
+  const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET ?? 'supersecret123', {
+    expiresIn: '1d',
+  });
 
   // Pre-cache user in Redis
   const redis = getRedisClient();
@@ -68,11 +61,9 @@ export const loginUser = async (email: string, password: string) => {
     throw new ApiError(httpStatus.BAD_REQUEST, 'Invalid credentials');
   }
 
-  const token = jwt.sign(
-    { id: user.id },
-    process.env.JWT_SECRET || 'supersecret123',
-    { expiresIn: '1d' }
-  );
+  const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET ?? 'supersecret123', {
+    expiresIn: '1d',
+  });
 
   // Cache user on login so gRPC token validation hits Redis
   const redis = getRedisClient();
@@ -96,19 +87,16 @@ export const getUserById = async (id: string) => {
     return null;
   }
 
-  const { password, ...userWithoutPassword } = user;
+  const { password: _password, ...userWithoutPassword } = user;
   await redis.setex(cacheKey, USER_CACHE_TTL, JSON.stringify(userWithoutPassword));
 
   return userWithoutPassword;
 };
 
 export const validateToken = async (token: string) => {
-  let decoded: any;
+  let decoded: { id: string };
   try {
-    decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || 'supersecret123'
-    );
+    decoded = jwt.verify(token, process.env.JWT_SECRET ?? 'supersecret123') as { id: string };
   } catch {
     return { valid: false, userId: '', error: 'Invalid token' };
   }

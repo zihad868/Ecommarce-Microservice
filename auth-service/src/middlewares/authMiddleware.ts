@@ -1,8 +1,6 @@
-import { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma from '../utils/prismaClient';
 
 interface JwtPayload {
   id: string;
@@ -14,17 +12,10 @@ interface JwtPayload {
  * Auth middleware for the auth-service itself (protects /api/auth/me).
  * Validates JWT locally and fetches user from PostgreSQL.
  */
-export const protect = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
+export const protect = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   let token: string | undefined;
 
-  if (
-    req.headers.authorization &&
-    req.headers.authorization.startsWith('Bearer')
-  ) {
+  if (req.headers.authorization?.startsWith('Bearer')) {
     token = req.headers.authorization.split(' ')[1];
   }
 
@@ -34,10 +25,7 @@ export const protect = async (
   }
 
   try {
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET || 'supersecret123'
-    ) as JwtPayload;
+    const decoded = jwt.verify(token, process.env.JWT_SECRET ?? 'supersecret123') as JwtPayload;
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
@@ -51,7 +39,7 @@ export const protect = async (
 
     req.user = { id: user.id, email: user.email, role: user.role };
     next();
-  } catch (err) {
+  } catch {
     res.status(401).json({ success: false, error: 'Not authorized to access this route' });
   }
 };

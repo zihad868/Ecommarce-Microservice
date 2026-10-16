@@ -1,14 +1,56 @@
 {
-  "name": "ecommerce-microservice-root",
+  "name": "ecommerce-microservice",
   "version": "1.0.0",
-  "description": "Root orchestrator for Ecommerce Microservices",
+  "description": "Production-grade e-commerce microservice system",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "auth-service",
+    "product-service",
+    "order-service"
+  ],
   "scripts": {
-    "install:all": "npm install --prefix auth-service && npm install --prefix product-service && npm install --prefix order-service",
-    "build": "npm run build --prefix auth-service && npm run build --prefix product-service && npm run build --prefix order-service",
-    "db:generate": "npm run db:generate --prefix auth-service && npm run db:generate --prefix product-service && npm run db:generate --prefix order-service",
-    "db:push": "npm run db:push --prefix auth-service && npm run db:push --prefix product-service && npm run db:push --prefix order-service",
+    "build": "npm run build -w packages/common && npm run build -w auth-service -w product-service -w order-service",
+    "typecheck": "npm run typecheck -w packages/common -w auth-service -w product-service -w order-service",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,json,md,yml,yaml}\"",
+    "test": "npm run test -w packages/common -w auth-service -w product-service -w order-service",
+    "test:coverage": "npm run test:coverage -w packages/common -w auth-service -w product-service -w order-service",
+    "db:generate": "npm run db:generate -w auth-service -w product-service -w order-service",
+    "db:migrate": "npm run db:migrate -w auth-service -w product-service -w order-service",
     "docker:up": "docker compose up --build",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "prepare": "husky"
   },
-  "private": true
+  "devDependencies": {
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
+    "@eslint/js": "^9.18.0",
+    "@typescript-eslint/eslint-plugin": "^8.19.1",
+    "@typescript-eslint/parser": "^8.19.1",
+    "eslint": "^9.18.0",
+    "eslint-config-prettier": "^9.1.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.3.0",
+    "prettier": "^3.4.2",
+    "prisma": "^6.4.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^5.0.5"
+  },
+  "lint-staged": {
+    "*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
 }
