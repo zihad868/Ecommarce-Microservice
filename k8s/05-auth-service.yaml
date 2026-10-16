@@ -14,28 +14,28 @@ metadata:
   labels:
     app: auth-service
     tier: service
-    version: "1.0"
+    version: '1.0'
 spec:
-  replicas: 2                   # HPA এর সাথে কাজ করবে (initial 2 pods)
+  replicas: 2 # HPA এর সাথে কাজ করবে (initial 2 pods)
   selector:
     matchLabels:
       app: auth-service
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1               # একসাথে 1 নতুন pod আসতে পারবে
-      maxUnavailable: 0         # zero downtime — সবসময় সব pods ready থাকবে
+      maxSurge: 1 # একসাথে 1 নতুন pod আসতে পারবে
+      maxUnavailable: 0 # zero downtime — সবসময় সব pods ready থাকবে
   template:
     metadata:
       labels:
         app: auth-service
         tier: service
-        version: "1.0"
+        version: '1.0'
       annotations:
         # Prometheus metrics scraping
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "3001"
-        prometheus.io/path: "/metrics"
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '3001'
+        prometheus.io/path: '/metrics'
     spec:
       # ── Pod anti-affinity: দুটো pod কখনো একই node-এ যাবে না ──────────────
       affinity:
@@ -54,7 +54,7 @@ spec:
       # ── Pod-level Security Context ─────────────────────────────────────────
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1001        # Node.js app non-root user
+        runAsUser: 1001 # Node.js app non-root user
         runAsGroup: 1001
         fsGroup: 1001
 
@@ -80,11 +80,11 @@ spec:
           # ── Environment Variables ──────────────────────────────────────────
           env:
             - name: PORT
-              value: "3001"
+              value: '3001'
             - name: GRPC_PORT
-              value: "50051"
+              value: '50051'
             - name: NODE_ENV
-              value: "production"
+              value: 'production'
 
           # Secrets থেকে sensitive config
           envFrom:
@@ -97,11 +97,11 @@ spec:
           # ── Resource Requests & Limits ─────────────────────────────────────
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "200m"       # HPA এই CPU দেখে scale করবে
+              memory: '256Mi'
+              cpu: '200m' # HPA এই CPU দেখে scale করবে
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: '512Mi'
+              cpu: '500m'
 
           # ── Health Probes ──────────────────────────────────────────────────
 
@@ -109,19 +109,19 @@ spec:
           # এটা pass করার আগে liveness/readiness check হয় না
           startupProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: 3001
             initialDelaySeconds: 10
             periodSeconds: 5
-            failureThreshold: 15   # 75s startup window (Prisma migration সহ)
+            failureThreshold: 15 # 75s startup window (Prisma migration সহ)
             successThreshold: 1
 
           # livenessProbe: app জীবিত আছে কিনা — fail হলে restart হবে
           livenessProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: 3001
-            initialDelaySeconds: 0    # startupProbe এর পরে শুরু হয়
+            initialDelaySeconds: 0 # startupProbe এর পরে শুরু হয়
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
@@ -130,7 +130,7 @@ spec:
           # readinessProbe: traffic পাঠানো হবে কিনা — fail হলে Service এর endpoint থেকে বাদ
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: 3001
             initialDelaySeconds: 0
             periodSeconds: 10
@@ -164,7 +164,6 @@ spec:
       terminationGracePeriodSeconds: 30
 
 ---
-
 # ── Auth Service — ClusterIP Service ─────────────────────────────────────────
 apiVersion: v1
 kind: Service
@@ -189,7 +188,6 @@ spec:
   type: ClusterIP
 
 ---
-
 # ── HPA: Horizontal Pod Autoscaler ───────────────────────────────────────────
 # CPU > 70% বা Memory > 80% হলে scale up
 apiVersion: autoscaling/v2
@@ -202,37 +200,36 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: auth-service
-  minReplicas: 2          # সবসময় minimum 2 pods (high availability)
-  maxReplicas: 8          # maximum 8 pods পর্যন্ত scale
+  minReplicas: 2 # সবসময় minimum 2 pods (high availability)
+  maxReplicas: 8 # maximum 8 pods পর্যন্ত scale
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 70    # CPU 70% হলে scale up শুরু
+          averageUtilization: 70 # CPU 70% হলে scale up শুরু
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
-          averageUtilization: 80    # Memory 80% হলে scale up
+          averageUtilization: 80 # Memory 80% হলে scale up
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 60    # 60s দেখার পরে scale up
+      stabilizationWindowSeconds: 60 # 60s দেখার পরে scale up
       policies:
         - type: Pods
-          value: 2                      # একবারে max 2 pod বাড়াবে
+          value: 2 # একবারে max 2 pod বাড়াবে
           periodSeconds: 60
     scaleDown:
-      stabilizationWindowSeconds: 300   # 5 মিনিট stable থাকলে scale down
+      stabilizationWindowSeconds: 300 # 5 মিনিট stable থাকলে scale down
       policies:
         - type: Pods
-          value: 1                      # একবারে max 1 pod কমাবে
+          value: 1 # একবারে max 1 pod কমাবে
           periodSeconds: 120
 
 ---
-
 # ── PodDisruptionBudget ───────────────────────────────────────────────────────
 # Rolling update বা node drain-এর সময় minimum 1 pod সচল থাকবে
 apiVersion: policy/v1
@@ -241,7 +238,7 @@ metadata:
   name: auth-service-pdb
   namespace: ecommerce
 spec:
-  minAvailable: 1    # 2 pods-এর মধ্যে min 1 সবসময় সচল
+  minAvailable: 1 # 2 pods-এর মধ্যে min 1 সবসময় সচল
   selector:
     matchLabels:
       app: auth-service

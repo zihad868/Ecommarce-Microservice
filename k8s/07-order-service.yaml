@@ -12,9 +12,9 @@ metadata:
   labels:
     app: order-service
     tier: service
-    version: "1.0"
+    version: '1.0'
 spec:
-  replicas: 2                   # initial 2 pods (1 থেকে বাড়ানো হয়েছে — HA এর জন্য)
+  replicas: 2 # initial 2 pods (1 থেকে বাড়ানো হয়েছে — HA এর জন্য)
   selector:
     matchLabels:
       app: order-service
@@ -22,17 +22,17 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
-      maxUnavailable: 0         # zero downtime
+      maxUnavailable: 0 # zero downtime
   template:
     metadata:
       labels:
         app: order-service
         tier: service
-        version: "1.0"
+        version: '1.0'
       annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "3003"
-        prometheus.io/path: "/metrics"
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '3003'
+        prometheus.io/path: '/metrics'
     spec:
       # ── Pod Anti-Affinity ─────────────────────────────────────────────────
       affinity:
@@ -72,11 +72,11 @@ spec:
 
           env:
             - name: PORT
-              value: "3003"
+              value: '3003'
             - name: GRPC_PORT
-              value: "50053"
+              value: '50053'
             - name: NODE_ENV
-              value: "production"
+              value: 'production'
 
           envFrom:
             - secretRef:
@@ -85,25 +85,25 @@ spec:
           # ── Resource Requests & Limits ─────────────────────────────────────
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "200m"
+              memory: '256Mi'
+              cpu: '200m'
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: '512Mi'
+              cpu: '500m'
 
           # ── Health Probes ──────────────────────────────────────────────────
           startupProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: 3003
             initialDelaySeconds: 10
             periodSeconds: 5
-            failureThreshold: 15   # 75s startup window
+            failureThreshold: 15 # 75s startup window
             successThreshold: 1
 
           livenessProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: 3003
             initialDelaySeconds: 0
             periodSeconds: 15
@@ -113,7 +113,7 @@ spec:
 
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: 3003
             initialDelaySeconds: 0
             periodSeconds: 10
@@ -144,7 +144,6 @@ spec:
       terminationGracePeriodSeconds: 30
 
 ---
-
 # ── Order Service — ClusterIP Service ────────────────────────────────────────
 apiVersion: v1
 kind: Service
@@ -169,7 +168,6 @@ spec:
   type: ClusterIP
 
 ---
-
 # ── HPA: min=2, max=8 ────────────────────────────────────────────────────────
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -181,7 +179,7 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: order-service
-  minReplicas: 2          # 1 থেকে 2 বাড়ানো হয়েছে (single pod = single point of failure!)
+  minReplicas: 2 # 1 থেকে 2 বাড়ানো হয়েছে (single pod = single point of failure!)
   maxReplicas: 8
   metrics:
     - type: Resource
@@ -211,7 +209,6 @@ spec:
           periodSeconds: 120
 
 ---
-
 # ── PodDisruptionBudget ───────────────────────────────────────────────────────
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -219,7 +216,7 @@ metadata:
   name: order-service-pdb
   namespace: ecommerce
 spec:
-  minAvailable: 1    # 2 pods-এর মধ্যে min 1 সবসময় সচল
+  minAvailable: 1 # 2 pods-এর মধ্যে min 1 সবসময় সচল
   selector:
     matchLabels:
       app: order-service

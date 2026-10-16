@@ -13,27 +13,27 @@ metadata:
   labels:
     app: product-service
     tier: service
-    version: "1.0"
+    version: '1.0'
 spec:
-  replicas: 3                   # initial 3 pods
+  replicas: 3 # initial 3 pods
   selector:
     matchLabels:
       app: product-service
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 2               # scale up এর সময় 2 নতুন pod একসাথে
-      maxUnavailable: 0         # zero downtime
+      maxSurge: 2 # scale up এর সময় 2 নতুন pod একসাথে
+      maxUnavailable: 0 # zero downtime
   template:
     metadata:
       labels:
         app: product-service
         tier: service
-        version: "1.0"
+        version: '1.0'
       annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "3002"
-        prometheus.io/path: "/metrics"
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '3002'
+        prometheus.io/path: '/metrics'
     spec:
       # ── Pod Anti-Affinity: pods আলাদা nodes-এ spread করবে ───────────────
       affinity:
@@ -73,11 +73,11 @@ spec:
 
           env:
             - name: PORT
-              value: "3002"
+              value: '3002'
             - name: GRPC_PORT
-              value: "50052"
+              value: '50052'
             - name: NODE_ENV
-              value: "production"
+              value: 'production'
 
           envFrom:
             - secretRef:
@@ -86,25 +86,25 @@ spec:
           # ── Resource Requests & Limits ─────────────────────────────────────
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "250m"
+              memory: '256Mi'
+              cpu: '250m'
             limits:
-              memory: "512Mi"
-              cpu: "600m"
+              memory: '512Mi'
+              cpu: '600m'
 
           # ── Health Probes ──────────────────────────────────────────────────
           startupProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: 3002
             initialDelaySeconds: 10
             periodSeconds: 5
-            failureThreshold: 15   # 75s startup window
+            failureThreshold: 15 # 75s startup window
             successThreshold: 1
 
           livenessProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: 3002
             initialDelaySeconds: 0
             periodSeconds: 15
@@ -114,7 +114,7 @@ spec:
 
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: 3002
             initialDelaySeconds: 0
             periodSeconds: 10
@@ -145,7 +145,6 @@ spec:
       terminationGracePeriodSeconds: 30
 
 ---
-
 # ── Product Service — ClusterIP Service ──────────────────────────────────────
 apiVersion: v1
 kind: Service
@@ -170,7 +169,6 @@ spec:
   type: ClusterIP
 
 ---
-
 # ── HPA: min=3, max=10 ───────────────────────────────────────────────────────
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -182,8 +180,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: product-service
-  minReplicas: 3          # সবসময় minimum 3 pods
-  maxReplicas: 10         # maximum 10 pods
+  minReplicas: 3 # সবসময় minimum 3 pods
+  maxReplicas: 10 # maximum 10 pods
   metrics:
     - type: Resource
       resource:
@@ -202,7 +200,7 @@ spec:
       stabilizationWindowSeconds: 60
       policies:
         - type: Pods
-          value: 3                      # একবারে max 3 pod বাড়াবে (faster scale)
+          value: 3 # একবারে max 3 pod বাড়াবে (faster scale)
           periodSeconds: 60
     scaleDown:
       stabilizationWindowSeconds: 300
@@ -212,7 +210,6 @@ spec:
           periodSeconds: 120
 
 ---
-
 # ── PodDisruptionBudget: min 2 pods সবসময় সচল ──────────────────────────────
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -220,7 +217,7 @@ metadata:
   name: product-service-pdb
   namespace: ecommerce
 spec:
-  minAvailable: 2         # 3 pods এর মধ্যে min 2 সচল থাকবে
+  minAvailable: 2 # 3 pods এর মধ্যে min 2 সচল থাকবে
   selector:
     matchLabels:
       app: product-service

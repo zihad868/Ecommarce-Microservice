@@ -4,6 +4,12 @@
 **/npm-debug.log*
 .git
 .gitignore
-PROJECT_REVIEW.md
-run_and_test_guide.md
-k8s_deployment_guide.md
+.github
+.husky
+.vscode
+coverage
+*.md
+docs/
+tests/
+k8s/
+docker/
