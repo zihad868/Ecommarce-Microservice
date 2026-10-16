@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
 import { getRedisClient } from '../utils/redisClient';
+import ApiError from '../errors/ApiError';
 
 const prisma = new PrismaClient();
 
@@ -17,7 +18,7 @@ export interface CachedUser {
 export const registerUser = async (email: string, password: string) => {
   let user = await prisma.user.findUnique({ where: { email } });
   if (user) {
-    throw new Error('User already exists');
+    throw new ApiError(httpStatus.BAD_REQUEST, 'User already exists');
   }
 
   const salt = await bcrypt.genSalt(10);
