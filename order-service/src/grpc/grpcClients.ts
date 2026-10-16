@@ -51,23 +51,20 @@ export interface ValidateTokenResponse {
   error: string;
 }
 
-// Wrapper for gRPC product check with deadline
+import { invokeResilientGrpc } from '@ecommerce/common';
+
+// Wrapper for gRPC product check with deadline, retries with jitter, and circuit breaker
 export const getProductDetails = (
   productId: string,
-  timeoutMs = 3000,
+  timeoutMs = 5000,
 ): Promise<ProductResponse> => {
-  return new Promise((resolve, reject) => {
-    const deadline = new Date(Date.now() + timeoutMs);
-    productClient.GetProduct(
-      { productId },
-      { deadline },
-      (err: Error | null, response: ProductResponse) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve(response);
-      },
-    );
-  });
+  return invokeResilientGrpc<{ productId: string }, ProductResponse>(
+    'product-service',
+    'GetProduct',
+    (req, meta, options, cb) => {
+      productClient.GetProduct(req, meta, options, cb);
+    },
+    { productId },
+    { timeoutMs, maxRetries: 3 },
+  );
 };

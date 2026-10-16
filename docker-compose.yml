@@ -1,18 +1,17 @@
 services:
-
   # ── Kafka Broker (KRaft mode — no Zookeeper needed!) ───────────────────────
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: kafka
     ports:
-      - "9092:9092"
-      - "9093:9093"
+      - '9092:9092'
+      - '9093:9093'
     environment:
       # ── KRaft mode (Kafka manages itself — no Zookeeper) ──────────────────
-      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"            # fixed random cluster ID
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk' # fixed random cluster ID
       KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller            # একই node broker + controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9094      # নিজেই voter
+      KAFKA_PROCESS_ROLES: broker,controller # একই node broker + controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9094 # নিজেই voter
 
       # ── Listeners ────────────────────────────────────────────────────────
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9094,EXTERNAL://0.0.0.0:9093
@@ -25,10 +24,10 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      test: ['CMD', 'kafka-broker-api-versions', '--bootstrap-server', 'localhost:9092']
       interval: 15s
       timeout: 10s
       retries: 8
@@ -39,7 +38,7 @@ services:
     image: provectuslabs/kafka-ui:v0.7.2
     container_name: kafka-ui
     ports:
-      - "8080:8080"
+      - '8080:8080'
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
@@ -47,18 +46,17 @@ services:
       kafka:
         condition: service_healthy
 
-
   # ── Shared Cache (Redis) ───────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: redis
     ports:
-      - "6379:6379"
+      - '6379:6379'
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -68,7 +66,7 @@ services:
     image: postgres:15-alpine
     container_name: auth-db
     ports:
-      - "5433:5432"
+      - '5433:5432'
     environment:
       POSTGRES_USER: auth_user
       POSTGRES_PASSWORD: auth_password
@@ -76,7 +74,7 @@ services:
     volumes:
       - auth_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      test: ['CMD-SHELL', 'pg_isready -U auth_user -d auth_db']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -86,7 +84,7 @@ services:
     image: postgres:15-alpine
     container_name: order-db
     ports:
-      - "5434:5432"
+      - '5434:5432'
     environment:
       POSTGRES_USER: order_user
       POSTGRES_PASSWORD: order_password
@@ -94,7 +92,7 @@ services:
     volumes:
       - order_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U order_user -d order_db"]
+      test: ['CMD-SHELL', 'pg_isready -U order_user -d order_db']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -104,7 +102,7 @@ services:
     image: postgres:15-alpine
     container_name: product-db
     ports:
-      - "5435:5432"
+      - '5435:5432'
     environment:
       POSTGRES_USER: product_user
       POSTGRES_PASSWORD: product_password
@@ -112,7 +110,7 @@ services:
     volumes:
       - product_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U product_user -d product_db"]
+      test: ['CMD-SHELL', 'pg_isready -U product_user -d product_db']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -124,8 +122,8 @@ services:
       dockerfile: ./auth-service/Dockerfile
     container_name: auth-service
     ports:
-      - "3001:3001"
-      - "50051:50051"
+      - '3001:3001'
+      - '50051:50051'
     environment:
       - PORT=3001
       - GRPC_PORT=50051
@@ -138,9 +136,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: sh -c "npx prisma db push && node dist/server.js"
+    command: sh -c "npx prisma migrate deploy && node dist/server.js"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3001/health || exit 1']
       interval: 15s
       timeout: 5s
       retries: 5
@@ -153,8 +151,8 @@ services:
       dockerfile: ./product-service/Dockerfile
     container_name: product-service
     ports:
-      - "3002:3002"
-      - "50052:50052"
+      - '3002:3002'
+      - '50052:50052'
     environment:
       - PORT=3002
       - GRPC_PORT=50052
@@ -172,9 +170,9 @@ services:
         condition: service_healthy
       auth-service:
         condition: service_healthy
-    command: sh -c "npx prisma db push && node dist/server.js"
+    command: sh -c "npx prisma migrate deploy && node dist/server.js"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/health || exit 1"]
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3002/health || exit 1']
       interval: 15s
       timeout: 5s
       retries: 5
@@ -187,8 +185,8 @@ services:
       dockerfile: ./order-service/Dockerfile
     container_name: order-service
     ports:
-      - "3003:3003"
-      - "50053:50053"
+      - '3003:3003'
+      - '50053:50053'
     environment:
       - PORT=3003
       - GRPC_PORT=50053
@@ -209,13 +207,58 @@ services:
         condition: service_healthy
       product-service:
         condition: service_healthy
-    command: sh -c "npx prisma db push && node dist/server.js"
+    command: sh -c "npx prisma migrate deploy && node dist/server.js"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3003/health || exit 1"]
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3003/health || exit 1']
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  # ── Observability: Prometheus ──────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    profiles:
+      - observability
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+
+  # ── Observability: Grafana ─────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: grafana
+    profiles:
+      - observability
+    ports:
+      - '3000:3000'
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  # ── Observability: Jaeger Distributed Tracing ──────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:1.55
+    container_name: jaeger
+    profiles:
+      - observability
+    ports:
+      - '16686:16686' # Web UI
+      - '4317:4317' # OTLP gRPC receiver
+      - '4318:4318' # OTLP HTTP receiver
 
 # ── Named Volumes (data persisted across container restarts) ───────────────
 volumes:
@@ -223,3 +266,5 @@ volumes:
   auth_db_data:
   order_db_data:
   product_db_data:
+  prometheus_data:
+  grafana_data:

@@ -71,7 +71,7 @@ const getProduct = async (
   }
 };
 
-export const startGrpcServer = (): void => {
+export const startGrpcServer = (): grpc.Server => {
   const server = new grpc.Server({
     'grpc.max_receive_message_length': 1024 * 1024 * 10,
     'grpc.max_send_message_length': 1024 * 1024 * 10,
@@ -95,4 +95,6 @@ export const startGrpcServer = (): void => {
       console.log(`Product gRPC Server running on port ${String(boundPort)}`);
     },
   );
+
+  return server;
 };

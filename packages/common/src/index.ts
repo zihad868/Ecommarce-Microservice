@@ -43,3 +43,20 @@ export {
   ORDER_CREATED_DLQ_TOPIC,
 } from './events/orderEvents';
 export type { OrderCreatedEvent, OrderItemEvent } from './events/orderEvents';
+
+// ── Observability & Reliability ───────────────────────────────────────────────
+export { createLogger, createHttpLoggingMiddleware } from './logger/logger';
+export type { CreateLoggerOptions } from './logger/logger';
+export {
+  initMetrics,
+  getMetricsBundle,
+  metricsMiddleware,
+  metricsHandler,
+} from './metrics/metrics';
+export type { MetricsRegistryBundle } from './metrics/metrics';
+export { invokeResilientGrpc } from './grpc/resilientClient';
+export type { ResilientGrpcOptions } from './grpc/resilientClient';
+export { createHealthRouter } from './health/healthCheck';
+export type { HealthCheckOptions } from './health/healthCheck';
+export { registerGracefulShutdown } from './shutdown/gracefulShutdown';
+export type { GracefulShutdownConfig } from './shutdown/gracefulShutdown';

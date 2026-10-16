@@ -28,7 +28,9 @@ interface ValidateTokenResponse {
   error: string;
 }
 
-export const protect = (req: Request, res: Response, next: NextFunction): void => {
+import { invokeResilientGrpc } from '@ecommerce/common';
+
+export const protect = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   let token: string | undefined;
 
   if (req.headers.authorization?.startsWith('Bearer')) {
@@ -40,15 +42,31 @@ export const protect = (req: Request, res: Response, next: NextFunction): void =
     return;
   }
 
-  authClient.ValidateToken({ token }, (err: Error | null, response?: ValidateTokenResponse) => {
-    if (err || !response?.valid) {
+  try {
+    const response = await invokeResilientGrpc<{ token: string }, ValidateTokenResponse>(
+      'auth-service',
+      'ValidateToken',
+      (r, meta, options, cb) => {
+        authClient.ValidateToken(r, meta, options, cb);
+      },
+      { token },
+      { timeoutMs: 3000, maxRetries: 2 },
+    );
+
+    if (!response.valid) {
       res.status(401).json({
         success: false,
-        error: response?.error ?? 'Not authorized',
+        error: response.error || 'Not authorized',
       });
       return;
     }
+
     req.user = { id: response.userId, role: response.role };
     next();
-  });
+  } catch (err: any) {
+    res.status(401).json({
+      success: false,
+      error: err?.message ?? 'Authentication service unavailable',
+    });
+  }
 };

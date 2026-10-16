@@ -3,8 +3,15 @@ import helmet from 'helmet';
 import cors from 'cors';
 import {
   correlationIdMiddleware,
+  createHealthRouter,
+  createHttpLoggingMiddleware,
+  createLogger,
   createRedisRateLimiter,
   globalErrorHandler,
+  initMetrics,
+  metricsHandler,
+  metricsMiddleware,
+  registerGracefulShutdown,
 } from '@ecommerce/common';
 import config from './config';
 import { startGrpcServer } from './grpc/authServer';
@@ -13,6 +20,10 @@ import prisma from './utils/prismaClient';
 import { getRedisClient } from './utils/redisClient';
 
 const app = express();
+
+// ── Observability: Logger & Metrics ────────────────────────
+const logger = createLogger({ serviceName: 'auth-service' });
+initMetrics('auth-service');
 
 // ── Security Headers & Proxy ───────────────────────────────
 app.use(helmet());
@@ -45,12 +56,30 @@ app.use(
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
-// ── Correlation ID Propagation ─────────────────────────────
+// ── Correlation ID & HTTP Logging & Metrics ────────────────
 app.use(correlationIdMiddleware);
+app.use(createHttpLoggingMiddleware(logger));
+app.use(metricsMiddleware());
+
+// ── Prometheus Metrics Endpoint ────────────────────────────
+app.get('/metrics', (req: Request, res: Response) => {
+  void metricsHandler(req, res);
+});
+
+// ── Health Checks (Liveness & Deep Readiness) ──────────────
+const redis = getRedisClient();
+app.use(
+  createHealthRouter({
+    checkDatabase: async () => {
+      await prisma.$queryRaw`SELECT 1`;
+    },
+    checkRedis: async () => {
+      await redis.ping();
+    },
+  }),
+);
 
 // ── Rate Limiting (Redis-backed with in-memory fallback) ────
-const redis = getRedisClient();
-
 const globalLimiter = createRedisRateLimiter({
   redisClient: redis,
   windowMs: 60 * 1000,
@@ -68,34 +97,8 @@ const authLimiter = createRedisRateLimiter({
   prefix: 'rl:auth:login:',
 });
 
-// ── Health Check ───────────────────────────────────────────
-app.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({
-    status: 'healthy',
-    service: 'auth-service',
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.get('/health/live', (_req: Request, res: Response) => {
-  res.status(200).json({ status: 'live' });
-});
-
-app.get('/health/ready', async (_req: Request, res: Response) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.status(200).json({ status: 'ready', database: 'connected' });
-  } catch (err) {
-    res.status(503).json({
-      status: 'not ready',
-      database: 'disconnected',
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-});
-
 // ── Start gRPC Server ──────────────────────────────────────
-startGrpcServer();
+const grpcServer = startGrpcServer();
 
 // ── REST API Routes ────────────────────────────────────────
 app.use('/api/auth', authLimiter, authRoutes);
@@ -119,38 +122,26 @@ app.use(globalErrorHandler);
 
 // ── HTTP Server & Graceful Shutdown ────────────────────────
 const server = app.listen(config.PORT, () => {
-  console.log(`Auth Service REST API running on port ${String(config.PORT)}`);
+  logger.info(`Auth Service REST API running on port ${String(config.PORT)}`);
 });
 
-const gracefulShutdown = async (signal: string) => {
-  console.log(`[Auth Service] Received ${signal}. Starting graceful shutdown...`);
-
-  server.close(() => {
-    console.log('[Auth Service] Closed HTTP server.');
-  });
-
-  try {
-    await prisma.$disconnect();
-    console.log('[Auth Service] Disconnected Prisma.');
-  } catch (err) {
-    console.error('[Auth Service] Error disconnecting Prisma:', err);
-  }
-
-  try {
-    redis.disconnect();
-    console.log('[Auth Service] Disconnected Redis.');
-  } catch (err) {
-    console.error('[Auth Service] Error disconnecting Redis:', err);
-  }
-
-  process.exit(0);
-};
-
-process.on('SIGTERM', () => {
-  void gracefulShutdown('SIGTERM');
-});
-process.on('SIGINT', () => {
-  void gracefulShutdown('SIGINT');
+registerGracefulShutdown({
+  serviceName: 'auth-service',
+  httpServer: server,
+  grpcServer,
+  logger,
+  onShutdown: async () => {
+    try {
+      await prisma.$disconnect();
+    } catch (err) {
+      logger.warn({ err }, 'Error disconnecting Prisma');
+    }
+    try {
+      redis.disconnect();
+    } catch (err) {
+      logger.warn({ err }, 'Error disconnecting Redis');
+    }
+  },
 });
 
 export default app;

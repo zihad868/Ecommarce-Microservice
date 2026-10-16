@@ -3,8 +3,16 @@ import helmet from 'helmet';
 import cors from 'cors';
 import {
   correlationIdMiddleware,
+  createHealthRouter,
+  createHttpLoggingMiddleware,
+  createLogger,
+  createRedisClient,
   createRedisRateLimiter,
   globalErrorHandler,
+  initMetrics,
+  metricsHandler,
+  metricsMiddleware,
+  registerGracefulShutdown,
 } from '@ecommerce/common';
 import config from './config';
 import { connectKafkaProducer, disconnectKafkaProducer } from './events/kafka';
@@ -12,9 +20,12 @@ import { startOutboxWorker, stopOutboxWorker } from './events/outboxWorker';
 import { startGrpcServer } from './grpc/orderServer';
 import orderRoutes from './routes/orderRoutes';
 import prisma from './utils/prismaClient';
-import { createRedisClient } from '@ecommerce/common';
 
 const app = express();
+
+// ── Observability: Logger & Metrics ────────────────────────
+const logger = createLogger({ serviceName: 'order-service' });
+initMetrics('order-service');
 
 // ── Security Headers & Proxy ───────────────────────────────
 app.use(helmet());
@@ -47,10 +58,17 @@ app.use(
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
-// ── Correlation ID Propagation ─────────────────────────────
+// ── Correlation ID & HTTP Logging & Metrics ────────────────
 app.use(correlationIdMiddleware);
+app.use(createHttpLoggingMiddleware(logger));
+app.use(metricsMiddleware());
 
-// ── Rate Limiting (Redis-backed with in-memory fallback) ────
+// ── Prometheus Metrics Endpoint ────────────────────────────
+app.get('/metrics', (req: Request, res: Response) => {
+  void metricsHandler(req, res);
+});
+
+// ── Health Checks (Liveness & Deep Readiness) ──────────────
 const redis = createRedisClient({
   serviceName: 'order-service',
   host: config.REDIS_HOST,
@@ -58,6 +76,18 @@ const redis = createRedisClient({
   password: config.REDIS_PASSWORD,
 });
 
+app.use(
+  createHealthRouter({
+    checkDatabase: async () => {
+      await prisma.$queryRaw`SELECT 1`;
+    },
+    checkRedis: async () => {
+      await redis.ping();
+    },
+  }),
+);
+
+// ── Rate Limiting (Redis-backed with in-memory fallback) ────
 const globalLimiter = createRedisRateLimiter({
   redisClient: redis,
   windowMs: 60 * 1000,
@@ -67,36 +97,10 @@ const globalLimiter = createRedisRateLimiter({
 });
 app.use(globalLimiter);
 
-// ── Health Check (Liveness & Readiness) ────────────────────
-app.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({
-    status: 'healthy',
-    service: 'order-service',
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.get('/health/live', (_req: Request, res: Response) => {
-  res.status(200).json({ status: 'live' });
-});
-
-app.get('/health/ready', async (_req: Request, res: Response) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.status(200).json({ status: 'ready', database: 'connected' });
-  } catch (err) {
-    res.status(503).json({
-      status: 'not ready',
-      database: 'disconnected',
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-});
-
 // ── Start Kafka, Outbox Worker & gRPC ───────────────────────
 void connectKafkaProducer();
 startOutboxWorker(1000); // Poll outbox every 1 second
-startGrpcServer();
+const grpcServer = startGrpcServer();
 
 // ── REST API Routes ────────────────────────────────────────
 app.use('/api/orders', orderRoutes);
@@ -120,47 +124,32 @@ app.use(globalErrorHandler);
 
 // ── HTTP Server & Graceful Shutdown ────────────────────────
 const server = app.listen(config.PORT, () => {
-  console.log(`Order Service REST API running on port ${String(config.PORT)}`);
+  logger.info(`Order Service REST API running on port ${String(config.PORT)}`);
 });
 
-const gracefulShutdown = async (signal: string) => {
-  console.log(`[Order Service] Received ${signal}. Starting graceful shutdown...`);
-
-  server.close(() => {
-    console.log('[Order Service] Closed HTTP server.');
-  });
-
-  stopOutboxWorker();
-
-  try {
-    await disconnectKafkaProducer();
-    console.log('[Order Service] Disconnected Kafka producer.');
-  } catch (err) {
-    console.error('[Order Service] Error disconnecting Kafka:', err);
-  }
-
-  try {
-    await prisma.$disconnect();
-    console.log('[Order Service] Disconnected Prisma.');
-  } catch (err) {
-    console.error('[Order Service] Error disconnecting Prisma:', err);
-  }
-
-  try {
-    redis.disconnect();
-    console.log('[Order Service] Disconnected Redis.');
-  } catch (err) {
-    console.error('[Order Service] Error disconnecting Redis:', err);
-  }
-
-  process.exit(0);
-};
-
-process.on('SIGTERM', () => {
-  void gracefulShutdown('SIGTERM');
-});
-process.on('SIGINT', () => {
-  void gracefulShutdown('SIGINT');
+registerGracefulShutdown({
+  serviceName: 'order-service',
+  httpServer: server,
+  grpcServer,
+  logger,
+  onShutdown: async () => {
+    stopOutboxWorker();
+    try {
+      await disconnectKafkaProducer();
+    } catch (err) {
+      logger.warn({ err }, 'Error disconnecting Kafka producer');
+    }
+    try {
+      await prisma.$disconnect();
+    } catch (err) {
+      logger.warn({ err }, 'Error disconnecting Prisma');
+    }
+    try {
+      redis.disconnect();
+    } catch (err) {
+      logger.warn({ err }, 'Error disconnecting Redis');
+    }
+  },
 });
 
 export default app;
