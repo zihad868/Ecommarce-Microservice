@@ -59,6 +59,8 @@ export default tseslint.config(
       '**/.prisma/**',
       '**/src/generated/**',
       '**/prisma/migrations/**',
+      'eslint.config.mjs',
+      'commitlint.config.js',
     ],
   },
 );

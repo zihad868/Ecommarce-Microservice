@@ -1,16 +1,16 @@
-import { IGenericErrorMessage } from './error';
+import type { IGenericErrorMessage } from './error';
 
-export type IGenericResponse<T> = {
+export interface IGenericResponse<T> {
   meta: {
     page: number;
     limit: number;
     total: number;
   };
   data: T;
-};
+}
 
-export type IGenericErrorResponse = {
+export interface IGenericErrorResponse {
   statusCode: number;
   message: string;
   errorMessages: IGenericErrorMessage[];
-};
+}

@@ -1,6 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
+import config from '../config';
 import * as productService from '../services/productService';
 
 const PROTO_PATH = path.join(__dirname, '../../../protos/product.proto');
@@ -30,7 +31,7 @@ interface ProductResponse {
 
 const getProduct = async (
   call: grpc.ServerUnaryCall<ProductRequest, ProductResponse>,
-  callback: grpc.sendUnaryData<ProductResponse>
+  callback: grpc.sendUnaryData<ProductResponse>,
 ): Promise<void> => {
   try {
     const { productId } = call.request;
@@ -52,7 +53,7 @@ const getProduct = async (
       success: true,
       id: product.id,
       name: product.name,
-      price: product.price,
+      price: Number(product.price),
       stock: product.stock,
       error: '',
     });
@@ -76,18 +77,22 @@ export const startGrpcServer = (): void => {
     'grpc.max_send_message_length': 1024 * 1024 * 10,
   });
 
-  server.addService(productProto.product.ProductService.service, { GetProduct: getProduct });
+  server.addService(productProto.product.ProductService.service, {
+    GetProduct: (call: any, callback: any) => {
+      void getProduct(call, callback);
+    },
+  });
 
-  const port = process.env.GRPC_PORT || 50052;
+  const port = config.GRPC_PORT;
   server.bindAsync(
-    `0.0.0.0:${port}`,
+    `0.0.0.0:${String(port)}`,
     grpc.ServerCredentials.createInsecure(),
     (err, boundPort) => {
       if (err) {
         console.error('Failed to bind gRPC server:', err);
         return;
       }
-      console.log(`Product gRPC Server running on port ${boundPort}`);
-    }
+      console.log(`Product gRPC Server running on port ${String(boundPort)}`);
+    },
   );
 };

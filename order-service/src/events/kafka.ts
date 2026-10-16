@@ -1,49 +1,49 @@
-import { Kafka, Producer, Partitioners } from 'kafkajs';
+import { Kafka, type Producer, Partitioners } from 'kafkajs';
+import config from '../config';
 
 const kafka = new Kafka({
-  clientId: 'order-service',
-  brokers: [(process.env.KAFKA_BROKER ?? 'localhost:9092')],
+  clientId: config.KAFKA_CLIENT_ID,
+  brokers: [config.KAFKA_BROKER],
 });
 
 let producer: Producer | null = null;
 
-// ── Connect & create producer ───────────────────────────────
 export const connectKafkaProducer = async (): Promise<void> => {
   try {
     producer = kafka.producer({
-      createPartitioner: Partitioners.LegacyPartitioner,
+      createPartitioner: Partitioners.DefaultPartitioner,
     });
     await producer.connect();
     console.log('Order Service Kafka Producer connected');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('Kafka Producer connection failed, retrying in 5s...', msg);
-    setTimeout(() => void connectKafkaProducer(), 5000);
+    setTimeout(() => {
+      void connectKafkaProducer();
+    }, 5000);
   }
 };
 
-// ── Publish an event to a Kafka topic ──────────────────────
-export const publishEvent = async (topic: string, data: unknown): Promise<void> => {
+export const getKafkaProducer = (): Producer | null => producer;
+
+export const publishEvent = async (topic: string, key: string, data: unknown): Promise<void> => {
   if (!producer) {
-    console.error('Kafka Producer not ready');
-    return;
+    throw new Error('Kafka Producer is not connected');
   }
 
   await producer.send({
     topic,
     messages: [
       {
-        // key = topic name so related messages go to the same partition
-        key: topic,
+        key,
         value: JSON.stringify(data),
       },
     ],
   });
 
-  console.log(`[Kafka] Published to topic "${topic}":`, data);
+  console.log(`[Kafka] Published event to "${topic}" with key "${key}"`);
 };
 
-// ── Graceful shutdown ───────────────────────────────────────
 export const disconnectKafkaProducer = async (): Promise<void> => {
   if (producer) {
     await producer.disconnect();

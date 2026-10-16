@@ -10,35 +10,60 @@ datasource db {
 
 enum OrderStatus {
   PENDING
-  PROCESSING
+  CONFIRMED
+  PAID
+  SHIPPED
   COMPLETED
   CANCELLED
 }
 
 model Order {
-  id          String      @id @default(cuid())
-  userId      String
-  totalAmount Float
-  status      OrderStatus @default(PENDING)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  items       OrderItem[]
+  id             String        @id @default(cuid())
+  userId         String
+  totalAmount    Decimal       @db.Decimal(12, 2)
+  status         OrderStatus   @default(PENDING)
+  idempotencyKey String?       @unique
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  items          OrderItem[]
 
-  // Indexes for 10M user scale performance
   @@index([userId])
   @@index([status])
   @@index([createdAt])
-  @@index([userId, createdAt]) // Most common query: user's orders sorted by date
+  @@index([userId, createdAt])
 }
 
 model OrderItem {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   productId String
   quantity  Int
-  price     Float
+  price     Decimal @db.Decimal(12, 2)
   orderId   String
-  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@index([productId])
+}
+
+model OutboxEvent {
+  id          String   @id @default(cuid())
+  aggregateId String
+  eventType   String
+  payload     Json
+  published   Boolean  @default(false)
+  retryCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([published, createdAt])
+}
+
+model IdempotencyRecord {
+  key        String   @id
+  userId     String
+  statusCode Int
+  response   Json
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

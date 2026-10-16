@@ -20,6 +20,12 @@ export {
   CORRELATION_ID_HEADER,
   REQUEST_ID_HEADER,
 } from './middleware/correlationId';
+export { validateRequest } from './middleware/validateRequest';
+export type { RequestValidationSchema } from './middleware/validateRequest';
+export { createRedisRateLimiter } from './middleware/rateLimiter';
+export type { RateLimiterOptions } from './middleware/rateLimiter';
+export { requireRole } from './middleware/authRole';
+export type { AuthenticatedUser } from './middleware/authRole';
 
 // ── Redis ─────────────────────────────────────────────────────────────────────
 export { createRedisClient } from './redis/createRedisClient';
@@ -27,3 +33,13 @@ export type { RedisClientOptions } from './redis/createRedisClient';
 
 // ── gRPC ──────────────────────────────────────────────────────────────────────
 export { loadProto } from './grpc/protoLoader';
+export { getClientCredentials, getServerCredentials } from './grpc/credentials';
+
+// ── Events ────────────────────────────────────────────────────────────────────
+export {
+  orderCreatedEventSchema,
+  orderItemEventSchema,
+  ORDER_CREATED_TOPIC,
+  ORDER_CREATED_DLQ_TOPIC,
+} from './events/orderEvents';
+export type { OrderCreatedEvent, OrderItemEvent } from './events/orderEvents';

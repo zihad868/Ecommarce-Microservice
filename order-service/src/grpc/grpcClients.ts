@@ -1,6 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
+import config from '../config';
 
 const authProtoPath = path.join(__dirname, '../../../protos/auth.proto');
 const authPackageDef = protoLoader.loadSync(authProtoPath, {
@@ -25,16 +26,16 @@ const productPackageDef = protoLoader.loadSync(productProtoPath, {
 const productProto = grpc.loadPackageDefinition(productPackageDef) as any;
 
 export const authClient = new authProto.auth.AuthService(
-  process.env.AUTH_GRPC_URL || 'localhost:50051',
-  grpc.credentials.createInsecure()
+  config.AUTH_GRPC_URL,
+  grpc.credentials.createInsecure(),
 );
 
 export const productClient = new productProto.product.ProductService(
-  process.env.PRODUCT_GRPC_URL || 'localhost:50052',
-  grpc.credentials.createInsecure()
+  config.PRODUCT_GRPC_URL,
+  grpc.credentials.createInsecure(),
 );
 
-interface ProductResponse {
+export interface ProductResponse {
   success: boolean;
   id: string;
   name: string;
@@ -43,15 +44,30 @@ interface ProductResponse {
   error: string;
 }
 
-// Wrapper for gRPC product check
-export const getProductDetails = (productId: string): Promise<ProductResponse> => {
+export interface ValidateTokenResponse {
+  valid: boolean;
+  userId: string;
+  role: string;
+  error: string;
+}
+
+// Wrapper for gRPC product check with deadline
+export const getProductDetails = (
+  productId: string,
+  timeoutMs = 3000,
+): Promise<ProductResponse> => {
   return new Promise((resolve, reject) => {
+    const deadline = new Date(Date.now() + timeoutMs);
     productClient.GetProduct(
       { productId },
+      { deadline },
       (err: Error | null, response: ProductResponse) => {
-        if (err) return reject(err);
+        if (err) {
+          reject(err);
+          return;
+        }
         resolve(response);
-      }
+      },
     );
   });
 };

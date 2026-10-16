@@ -15,8 +15,10 @@
     "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.8.1",
     "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
     "http-status": "^2.1.0",
     "ioredis": "^5.6.1",
+    "rate-limit-redis": "^6.0.1",
     "uuid": "^11.1.0",
     "zod": "^3.24.2"
   },

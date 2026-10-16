@@ -1,178 +1,240 @@
-import prisma from '../utils/prismaClient';
+import httpStatus from 'http-status';
+import { ApiError } from '@ecommerce/common';
+import prisma, { Prisma, type Product } from '../utils/prismaClient';
 import { getRedisClient } from '../utils/redisClient';
-import type { Prisma } from '../utils/prismaClient';
+import type {
+  CreateProductInput,
+  ListProductsQuery,
+  UpdateProductInput,
+} from '../validators/productValidators';
 
-// Cache TTL: 10 minutes for individual products
-const PRODUCT_CACHE_TTL = 600;
-// Cache TTL: 1 minute for product lists (changes more frequently)
-const LIST_CACHE_TTL = 60;
+const PRODUCT_CACHE_TTL = 600; // 10 minutes
+const LIST_CACHE_TTL = 60; // 1 minute
 
-export const createProduct = async (data: any) => {
-  if (data.attributes && typeof data.attributes !== 'object') {
-    data.attributes = JSON.parse(data.attributes);
+const getListVersion = async (): Promise<string> => {
+  try {
+    const redis = getRedisClient();
+    const version = await redis.get('products:list:version');
+    if (!version) {
+      await redis.set('products:list:version', '1');
+      return '1';
+    }
+    return version;
+  } catch {
+    return '1';
   }
+};
 
+const invalidateListCache = async (): Promise<void> => {
+  try {
+    const redis = getRedisClient();
+    await redis.incr('products:list:version');
+  } catch (err) {
+    console.warn('[Cache] Failed to increment list cache version:', err);
+  }
+};
+
+const invalidateProductCache = async (productId: string): Promise<void> => {
+  try {
+    const redis = getRedisClient();
+    await redis.del(`product:${productId}`);
+    await invalidateListCache();
+  } catch (err) {
+    console.warn('[Cache] Failed to invalidate product cache:', err);
+  }
+};
+
+export const createProduct = async (data: CreateProductInput): Promise<Product> => {
   const product = await prisma.product.create({
     data: {
       name: data.name,
       description: data.description,
-      price: data.price,
+      price: new Prisma.Decimal(data.price),
       stock: data.stock,
       category: data.category,
       attributes: (data.attributes as object | undefined) ?? {},
     },
   });
 
-  // Invalidate product list caches on create
-  const redis = getRedisClient();
-  const keys = await redis.keys('products:list:*');
-  if (keys.length > 0) await redis.del(...keys);
-
+  await invalidateListCache();
   return product;
 };
 
-export const getProducts = async (query: Record<string, string | undefined>) => {
-  const redis = getRedisClient();
-  const cacheKey = `products:list:${JSON.stringify(query)}`;
+export const getProducts = async (query: ListProductsQuery) => {
+  const page = query.page;
+  const limit = Math.min(query.limit, 100);
+  const skip = (page - 1) * limit;
 
-  // Check Redis cache
-  const cached = await redis.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
+  const version = await getListVersion();
+  const cacheKey = `products:list:v${version}:${String(page)}:${String(limit)}:${query.category ?? ''}:${query.search ?? ''}:${query.minPrice !== undefined ? String(query.minPrice) : ''}:${query.maxPrice !== undefined ? String(query.maxPrice) : ''}:${query.sortBy}:${query.sortOrder}`;
+
+  try {
+    const redis = getRedisClient();
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached) as {
+        products: Product[];
+        meta: { page: number; limit: number; total: number; totalPages: number };
+      };
+    }
+  } catch (err) {
+    console.warn('[Cache] Redis get error on getProducts:', err);
   }
 
-  const { page = '1', limit = '10', sort, search, category, minPrice, maxPrice } = query;
-
-  const skip = (Number(page) - 1) * Number(limit);
-  const take = Number(limit);
-
-  // Build Prisma filter
   const where: Prisma.ProductWhereInput = {};
 
-  if (search) {
+  if (query.category) {
+    where.category = { equals: query.category, mode: 'insensitive' };
+  }
+
+  if (query.search) {
     where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { description: { contains: search, mode: 'insensitive' } },
+      { name: { contains: query.search, mode: 'insensitive' } },
+      { description: { contains: query.search, mode: 'insensitive' } },
     ];
   }
 
-  if (category) {
-    where.category = category;
-  }
-
-  if (minPrice !== undefined || maxPrice !== undefined) {
+  if (query.minPrice !== undefined || query.maxPrice !== undefined) {
     where.price = {};
-    if (minPrice !== undefined) where.price.gte = Number(minPrice);
-    if (maxPrice !== undefined) where.price.lte = Number(maxPrice);
-  }
-
-  // Sorting
-  let orderBy: Prisma.ProductOrderByWithRelationInput = { createdAt: 'desc' };
-  if (sort) {
-    const [field, order] = sort.split(':');
-    if (field) {
-      orderBy = { [field]: order === 'asc' ? 'asc' : 'desc' };
+    if (query.minPrice !== undefined) {
+      where.price.gte = new Prisma.Decimal(query.minPrice);
+    }
+    if (query.maxPrice !== undefined) {
+      where.price.lte = new Prisma.Decimal(query.maxPrice);
     }
   }
 
-  const products = await prisma.product.findMany({
-    where,
-    orderBy,
-    skip,
-    take,
-  });
+  const orderBy: Prisma.ProductOrderByWithRelationInput = {
+    [query.sortBy]: query.sortOrder,
+  };
 
-  const result = { success: true, count: products.length, data: products };
-  await redis.setex(cacheKey, LIST_CACHE_TTL, JSON.stringify(result));
+  const [products, total] = await Promise.all([
+    prisma.product.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy,
+    }),
+    prisma.product.count({ where }),
+  ]);
+
+  const result = {
+    products,
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+
+  try {
+    const redis = getRedisClient();
+    await redis.setex(cacheKey, LIST_CACHE_TTL, JSON.stringify(result));
+  } catch (err) {
+    console.warn('[Cache] Redis set error on getProducts:', err);
+  }
 
   return result;
 };
 
-export const getProductById = async (id: string) => {
-  const redis = getRedisClient();
+export const getProductById = async (id: string): Promise<Product | null> => {
   const cacheKey = `product:${id}`;
 
-  const cached = await redis.get(cacheKey);
-  if (cached) {
-    return JSON.parse(cached);
+  try {
+    const redis = getRedisClient();
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached) as Product;
+    }
+  } catch (err) {
+    console.warn('[Cache] Redis get error on getProductById:', err);
   }
 
-  const product = await prisma.product.findUnique({
-    where: { id },
-  });
+  const product = await prisma.product.findUnique({ where: { id } });
 
-  if (!product) {
-    return null;
+  if (product) {
+    try {
+      const redis = getRedisClient();
+      await redis.setex(cacheKey, PRODUCT_CACHE_TTL, JSON.stringify(product));
+    } catch (err) {
+      console.warn('[Cache] Redis set error on getProductById:', err);
+    }
   }
 
-  await redis.setex(cacheKey, PRODUCT_CACHE_TTL, JSON.stringify(product));
   return product;
 };
 
-export const updateProduct = async (id: string, data: any) => {
+export const updateProduct = async (id: string, data: UpdateProductInput): Promise<Product> => {
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) {
-    return null;
+    throw new ApiError(httpStatus.NOT_FOUND, 'Product not found');
   }
 
-  if (data.attributes && typeof data.attributes !== 'object') {
-    data.attributes = JSON.parse(data.attributes);
+  const updateData: Prisma.ProductUpdateInput = {};
+  if (data.name !== undefined) updateData.name = data.name;
+  if (data.description !== undefined) updateData.description = data.description;
+  if (data.price !== undefined) updateData.price = new Prisma.Decimal(data.price);
+  if (data.stock !== undefined) updateData.stock = data.stock;
+  if (data.category !== undefined) updateData.category = data.category;
+  if (data.attributes !== undefined) {
+    updateData.attributes = data.attributes as object;
   }
 
   const product = await prisma.product.update({
     where: { id },
-    data: {
-      name: data.name,
-      description: data.description,
-      price: data.price,
-      stock: data.stock,
-      category: data.category,
-      attributes: data.attributes,
-    },
+    data: updateData,
   });
 
-  // Invalidate caches
-  const redis = getRedisClient();
-  await redis.del(`product:${id}`);
-  const listKeys = await redis.keys('products:list:*');
-  if (listKeys.length > 0) await redis.del(...listKeys);
-
+  await invalidateProductCache(id);
   return product;
 };
 
-export const deleteProduct = async (id: string) => {
+export const deleteProduct = async (id: string): Promise<void> => {
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) {
-    return null;
+    throw new ApiError(httpStatus.NOT_FOUND, 'Product not found');
   }
 
-  await prisma.product.delete({
-    where: { id },
-  });
-
-  // Invalidate caches
-  const redis = getRedisClient();
-  await redis.del(`product:${id}`);
-  const listKeys = await redis.keys('products:list:*');
-  if (listKeys.length > 0) await redis.del(...listKeys);
-
-  return true;
+  await prisma.product.delete({ where: { id } });
+  await invalidateProductCache(id);
 };
 
-export const decrementProductStock = async (id: string, decrementBy: number) => {
-  const product = await prisma.product.update({
-    where: { id },
-    data: {
-      stock: {
-        decrement: decrementBy,
-      },
-    },
-  });
+/**
+ * Decrements stock atomically using conditional SQL.
+ * Guarantees zero oversell under concurrent order race conditions.
+ */
+export const decrementProductStock = async (
+  productId: string,
+  quantity: number,
+): Promise<Product> => {
+  if (quantity <= 0) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Quantity must be positive');
+  }
 
-  // Invalidate Redis product cache since stock has changed
-  const redis = getRedisClient();
-  await redis.del(`product:${id}`);
+  // Atomic conditional decrement in SQL: WHERE stock >= quantity
+  const updatedCount = await prisma.$executeRaw`
+    UPDATE "Product"
+    SET "stock" = "stock" - ${quantity}, "updatedAt" = NOW()
+    WHERE "id" = ${productId} AND "stock" >= ${quantity}
+  `;
 
-  // Note: List caches should probably be invalidated in the caller if needed
-  return product;
+  if (updatedCount === 0) {
+    const current = await prisma.product.findUnique({ where: { id: productId } });
+    if (!current) {
+      throw new ApiError(httpStatus.NOT_FOUND, `Product ${productId} not found`);
+    }
+    throw new ApiError(
+      httpStatus.CONFLICT,
+      `Insufficient stock for product ${current.name}. Available: ${String(current.stock)}, requested: ${String(quantity)}`,
+    );
+  }
+
+  const updated = await prisma.product.findUnique({ where: { id: productId } });
+  if (!updated) {
+    throw new ApiError(httpStatus.NOT_FOUND, 'Product not found after update');
+  }
+
+  await invalidateProductCache(productId);
+  return updated;
 };

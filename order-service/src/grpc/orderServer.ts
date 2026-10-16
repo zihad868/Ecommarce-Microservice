@@ -1,6 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import path from 'path';
+import config from '../config';
 import prisma, { type Order } from '../utils/prismaClient';
 
 const PROTO_PATH = path.join(__dirname, '../../../protos/order.proto');
@@ -65,7 +66,7 @@ const getOrder = async (
       success: true,
       id: order.id,
       userId: order.userId,
-      totalAmount: order.totalAmount,
+      totalAmount: Number(order.totalAmount),
       status: order.status,
       error: '',
     });
@@ -101,7 +102,7 @@ const getOrdersByUser = async (
         success: true,
         id: o.id,
         userId: o.userId,
-        totalAmount: o.totalAmount,
+        totalAmount: Number(o.totalAmount),
         status: o.status,
         error: '',
       })),
@@ -133,12 +134,16 @@ export const startGrpcServer = (): void => {
     },
   });
 
-  const port = process.env.GRPC_PORT ?? '50053';
-  server.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), (err, boundPort) => {
-    if (err) {
-      console.error('Failed to bind Order gRPC server:', err);
-      return;
-    }
-    console.log(`Order gRPC Server running on port ${String(boundPort)}`);
-  });
+  const port = config.GRPC_PORT;
+  server.bindAsync(
+    `0.0.0.0:${String(port)}`,
+    grpc.ServerCredentials.createInsecure(),
+    (err, boundPort) => {
+      if (err) {
+        console.error('Failed to bind Order gRPC server:', err);
+        return;
+      }
+      console.log(`Order gRPC Server running on port ${String(boundPort)}`);
+    },
+  );
 };

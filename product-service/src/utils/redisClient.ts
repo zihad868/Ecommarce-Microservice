@@ -1,22 +1,17 @@
-import Redis from 'ioredis';
+import type Redis from 'ioredis';
+import { createRedisClient } from '@ecommerce/common';
+import config from '../config';
 
 let redis: Redis | null = null;
 
 export const getRedisClient = (): Redis => {
-  if (!redis) {
-    redis = new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: Number(process.env.REDIS_PORT) || 6379,
-      password: process.env.REDIS_PASSWORD || undefined,
-      retryStrategy: (times: number): number => Math.min(times * 100, 3000),
-      lazyConnect: true,
-      maxRetriesPerRequest: 3,
-    });
-
-    redis.on('connect', () => console.log('Product Service: Redis connected'));
-    redis.on('error', (err: Error) =>
-      console.error('Product Service: Redis error', err.message)
-    );
-  }
+  redis ??= createRedisClient({
+    serviceName: 'product-service',
+    host: config.REDIS_HOST,
+    port: config.REDIS_PORT,
+    password: config.REDIS_PASSWORD,
+  });
   return redis;
 };
+
+export default getRedisClient;
