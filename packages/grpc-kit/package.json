@@ -1,0 +1,26 @@
+{
+  "name": "@ecommerce/grpc-kit",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src --passWithNoTests"
+  },
+  "dependencies": {
+    "@ecommerce/proto-gen": "*",
+    "@ecommerce/errors": "*",
+    "@grpc/grpc-js": "^1.14.4",
+    "express": "^5.2.1",
+    "opossum": "^10.0.0",
+    "pino": "^10.4.0",
+    "@ecommerce/observability": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/express": "^5.0.3",
+    "@types/opossum": "^8.1.9"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "name": "order-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc && node ../../tools/copy-prisma-client.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src --passWithNoTests",
+    "test:coverage": "vitest run src --coverage --passWithNoTests",
+    "start": "node --require @ecommerce/observability/dist/tracing.js dist/server.js",
+    "dev": "nodemon --exec ts-node src/server.ts",
+    "db:generate": "npx prisma generate",
+    "db:migrate": "npx prisma migrate deploy",
+    "db:push": "npx prisma db push"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@ecommerce/common": "*",
+    "@grpc/grpc-js": "^1.14.4",
+    "@grpc/proto-loader": "^0.8.1",
+    "@prisma/client": "6.19.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.3.0",
+    "http-status": "^2.1.0",
+    "kafkajs": "^2.2.4",
+    "@ecommerce/config": "*",
+    "@ecommerce/proto-gen": "*",
+    "helmet": "^8.3.0",
+    "zod": "^3.24.2",
+    "uuid": "^11.1.0",
+    "@ecommerce/messaging-kit": "*",
+    "@ecommerce/grpc-kit": "*",
+    "@ecommerce/observability": "*",
+    "@ecommerce/errors": "*"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.18",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.30",
+    "nodemon": "^3.1.10",
+    "prisma": "6.19.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "private": true
+}

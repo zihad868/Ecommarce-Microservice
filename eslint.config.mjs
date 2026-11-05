@@ -66,7 +66,9 @@ export default tseslint.config(
       '**/prisma/migrations/**',
       'eslint.config.mjs',
       'commitlint.config.js',
-      'tests/k6/**',
+      'tools/k6/**',
+      'tools/**/*.mjs',
+      'docs/legacy/**',
     ],
   },
 );

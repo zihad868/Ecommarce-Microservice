@@ -1,0 +1,19 @@
+syntax = "proto3";
+package payment.v1;
+
+import "common/v1/common.proto";
+
+service PaymentService {
+  rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
+}
+message CreatePaymentRequest {
+  string order_id = 1;
+  string user_id = 2;
+  string idempotency_key = 3;
+  common.v1.Money amount = 4;
+}
+message CreatePaymentResponse {
+  string payment_id = 1;
+  string status = 2;
+  string redirect_url = 3;
+}

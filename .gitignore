@@ -3,8 +3,6 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log
-package-lock.json
-pnpm-lock.yaml
 
 # Build output
 dist/
@@ -30,10 +28,15 @@ logs/
 coverage/
 .nyc_output/
 
-# Docker
-.dockerignore
-
 # Misc
 .idea/
 *.sublime-project
 *.sublime-workspace
+
+!.env.example
+.turbo/
+**/src/generated/client/
+**/.terraform/
+*.tfstate*
+*.tfplan
+platform/k8s/01-secrets.yaml

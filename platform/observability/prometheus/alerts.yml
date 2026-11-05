@@ -1,0 +1,10 @@
+groups:
+  - name: ecommerce
+    rules:
+      - alert: ServiceDown
+        expr: up{job="ecommerce"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Ecommerce metrics target {{ $labels.instance }} is down'

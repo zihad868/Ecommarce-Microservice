@@ -1,0 +1,10 @@
+syntax = "proto3";
+package events.payment.v1;
+import "common/v1/common.proto";
+
+message PaymentSucceeded {
+  common.v1.EventMetadata metadata = 1;
+  string payment_id = 2;
+  string order_id = 3;
+  common.v1.Money amount = 4;
+}

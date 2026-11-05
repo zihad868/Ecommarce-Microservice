@@ -1,33 +1,42 @@
 {
-  "name": "ecommerce-microservice",
+  "name": "ecommerce",
   "version": "1.0.0",
   "description": "Production-grade e-commerce microservice system",
   "private": true,
+  "packageManager": "npm@11.19.0",
   "workspaces": [
-    "ecommarce/packages/*",
-    "ecommarce/auth-service",
-    "ecommarce/product-service",
-    "ecommarce/order-service"
+    "packages/*",
+    "edge/*",
+    "services/*"
   ],
   "scripts": {
-    "build": "npm run build -w @ecommerce/common && npm run build -w auth-service -w product-service -w order-service",
-    "typecheck": "npm run typecheck -w @ecommerce/common -w auth-service -w product-service -w order-service",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,json,md,yml,yaml}\"",
-    "test": "npm run test -w @ecommerce/common -w auth-service -w product-service -w order-service",
-    "test:coverage": "npm run test:coverage -w @ecommerce/common -w auth-service -w product-service -w order-service",
-    "db:generate": "npm run db:generate -w auth-service -w product-service -w order-service",
-    "db:migrate": "npm run db:migrate -w auth-service -w product-service -w order-service",
+    "test": "turbo run test",
+    "test:coverage": "npm run test:coverage --workspaces --if-present",
+    "db:generate": "npm run db:generate --workspace identity-service --workspace catalog-service --workspace order-service",
+    "db:migrate": "npm run db:migrate --workspace identity-service --workspace catalog-service --workspace order-service",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
-    "prepare": "husky"
+    "prepare": "husky",
+    "db:push": "npm run db:push --workspace identity-service --workspace catalog-service --workspace order-service",
+    "contracts:generate": "node tools/codegen.mjs",
+    "contracts:check": "node tools/check-contracts.mjs",
+    "contracts:lint": "buf lint contracts",
+    "contracts:breaking": "buf breaking contracts --against .git#branch=main,subdir=contracts",
+    "check": "npm run contracts:check && npm run lint && npm run typecheck && npm test",
+    "dev:gateway": "npm run dev --workspace api-gateway"
   },
   "devDependencies": {
+    "@bufbuild/buf": "^1.50.0",
     "@commitlint/cli": "^19.6.1",
     "@commitlint/config-conventional": "^19.6.0",
     "@eslint/js": "^9.18.0",
+    "@grpc/proto-loader": "^0.8.1",
     "@typescript-eslint/eslint-plugin": "^8.19.1",
     "@typescript-eslint/parser": "^8.19.1",
     "eslint": "^9.18.0",
@@ -35,7 +44,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^15.3.0",
     "prettier": "^3.4.2",
-    "prisma": "^6.4.0",
+    "turbo": "^2.5.0",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.71.0",
     "vitest": "^5.0.5"
@@ -56,6 +65,7 @@
   "dependencies": {
     "argon2": "^0.45.1",
     "helmet": "^8.3.0",
+    "prisma": "6.19.3",
     "rate-limit-redis": "^6.0.1",
     "zod": "^3.24.2"
   }

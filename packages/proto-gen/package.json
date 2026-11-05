@@ -1,0 +1,20 @@
+{
+  "name": "@ecommerce/proto-gen",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run src --passWithNoTests"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.4",
+    "@grpc/proto-loader": "^0.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/express": "^5.0.3"
+  }
+}

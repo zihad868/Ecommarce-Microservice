@@ -1,0 +1,15 @@
+version: v2
+modules:
+  - path: proto
+  - path: events
+lint:
+  use:
+    - BASIC
+  except:
+    # Existing public JSON names are retained in the first versioned contracts.
+    - FIELD_LOWER_SNAKE_CASE
+    # Events use a separate module root and events.* package namespace.
+    - PACKAGE_DIRECTORY_MATCH
+breaking:
+  use:
+    - FILE

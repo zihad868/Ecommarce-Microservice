@@ -1,0 +1,20 @@
+syntax = "proto3";
+package events.order.v1;
+
+// v1 preserves the original outbox JSON names and amounts during the layout migration.
+// New money-bearing contracts use common.v1.Money.
+message OrderItem {
+  string productId = 1;
+  uint32 quantity = 2;
+  double price = 3;
+}
+message OrderCreated {
+  string eventId = 1;
+  uint32 version = 2;
+  string eventType = 3;
+  string timestamp = 4;
+  string orderId = 5;
+  string userId = 6;
+  repeated OrderItem items = 7;
+  double totalAmount = 8;
+}
