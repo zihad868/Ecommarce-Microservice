@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package auth.v1;
+
+service AuthService {
+  rpc ValidateToken (TokenRequest) returns (TokenResponse) {}
+  rpc Register (CredentialsRequest) returns (SessionResponse) {}
+  rpc Login (CredentialsRequest) returns (SessionResponse) {}
+  rpc Refresh (RefreshRequest) returns (TokensResponse) {}
+}
+
+message CredentialsRequest {
+  string email = 1;
+  string password = 2;
+}
+message User {
+  string id = 1;
+  string email = 2;
+  string role = 3;
+}
+message TokensResponse {
+  string accessToken = 1;
+  string refreshToken = 2;
+}
+message SessionResponse {
+  User user = 1;
+  TokensResponse tokens = 2;
+}
+message RefreshRequest { string refreshToken = 1; }
+
+message TokenRequest {
+  string token = 1;
+}
+
+message TokenResponse {
+  bool valid = 1;
+  string userId = 2;
+  string error = 3;
+  string role = 4;
+}

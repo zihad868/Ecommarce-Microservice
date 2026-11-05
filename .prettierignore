@@ -4,3 +4,8 @@ coverage
 .prisma
 package-lock.json
 *.log
+
+**/src/generated/**
+docs/legacy/**
+.turbo/
+platform/k8s/01-secrets.yaml

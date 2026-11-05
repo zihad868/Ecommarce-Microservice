@@ -1,0 +1,11 @@
+# Optional wire codecs; runtime gRPC types are generated locally by npm run contracts:generate.
+version: v2
+plugins:
+  - remote: buf.build/community/stephenh-ts-proto:v2.6.1
+    out: ../packages/proto-gen/src/wire
+    opt:
+      - onlyTypes=true
+      - forceLong=string
+      - useOptionals=messages
+inputs:
+  - directory: .

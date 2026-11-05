@@ -1,75 +1,30 @@
-# Contributing Guide
+# Contributing
 
-Thank you for contributing to the Ecommerce Microservices project! Follow these guidelines to maintain code quality, security, and architectural consistency.
+Use Node.js 22 and npm 10+. Install at the repository root with `npm ci`, then
+run `npm run db:generate`. The committed npm lockfile owns dependency resolution.
 
----
-
-## 1. Prerequisites
-
-- **Node.js**: v22+ (LTS)
-- **Docker & Docker Compose**: v2.20+
-- **npm**: v10+
-
----
-
-## 2. Monorepo Workflow
-
-This repository uses **npm workspaces**:
-
-- `packages/common`: Shared utilities, errors, logging, metrics, resilient gRPC client.
-- `auth-service`: Authentication, Argon2id hashing, JWT token rotation, gRPC auth server.
-- `product-service`: Catalog management, versioned Redis caching, atomic stock decrements.
-- `order-service`: Order placement, transactional outbox worker, state machine.
-
-### Key Commands
-
-```bash
-# Install dependencies across all packages
-npm install
-
-# Run typecheck monorepo-wide
-npm run typecheck
-
-# Run ESLint with TypeScript strict rules
-npm run lint
-
-# Build common package and all microservices
+```sh
+npm run contracts:generate  # after editing protobuf contracts
 npm run build
-
-# Run unit and concurrency tests
-npm test
-
-# Format all files with Prettier
-npx prettier --write .
+npm run check
+npm run format
 ```
 
----
+Workspaces are `services/*`, `edge/api-gateway` and `packages/*`. Use
+`npm run dev --workspace identity-service` (or another service name) for local
+development. See the [runbook](docs/runbooks/local-development.md) for dependencies.
 
-## 3. Git Commit Conventions
+Cross-service types belong in versioned contracts. Services communicate through
+gRPC/events and own their data. Do not import another service's source or database
+client. Place shared behavior in its owning package; `common` keeps compatibility
+exports for the existing Express code. New monetary contracts use integer minor
+units and currency; storage uses Prisma Decimal.
 
-We strictly enforce **Conventional Commits** validated via Husky and Commitlint:
+Use deadlines on RPC calls and restrict retries to operations safe to repeat.
+Consumers must tolerate duplicate delivery. Only commit an event offset after
+processing succeeds or DLQ publication succeeds. Document architecture changes
+under `docs/adr` and update readiness when adding new service dependencies.
 
-```
-<type>(<scope>): <short description>
-```
-
-Valid types:
-
-- `feat`: A new feature
-- `fix`: A bug fix
-- `docs`: Documentation only changes
-- `style`: Changes that do not affect the meaning of the code
-- `refactor`: A code change that neither fixes a bug nor adds a feature
-- `perf`: A code change that improves performance
-- `test`: Adding or correcting tests
-- `chore`: Changes to the build process or auxiliary tools
-
----
-
-## 4. Architectural Rules
-
-1. **Never use floats for currency**: Always use `Prisma.Decimal` or minor integer units.
-2. **Fail Fast on Missing Config**: Validate all environment variables with Zod at service startup.
-3. **No Direct Service-to-Service DB Access**: Microservices only communicate via gRPC (synchronous read) or Kafka (asynchronous event).
-4. **Resilient gRPC**: Always use `invokeResilientGrpc` for external RPC calls with deadlines and circuit breakers.
-5. **Architectural Decisions**: Document major technical choices in `docs/adr/`.
+The six foundation services should remain out of default deployment until their
+business handlers, migrations, dependency probes and integration checks exist.
+Use Conventional Commits; Husky and Commitlint enforce the repository convention.

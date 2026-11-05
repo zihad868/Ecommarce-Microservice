@@ -1,0 +1,152 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { Metadata, status, Server as GrpcServer, ServerCredentials } from '@grpc/grpc-js';
+import type { AuthServiceHandlers } from '@ecommerce/proto-gen';
+import { loadAuth } from '@ecommerce/proto-gen';
+import { createBackend } from '../backend';
+import type { GatewayBackend } from '../backend';
+import { createApp } from '../app';
+
+const servers: Server[] = [];
+afterEach(async () => {
+  await Promise.all(
+    servers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections();
+          server.close(() => resolve());
+        }),
+    ),
+  );
+});
+
+function backend(): GatewayBackend {
+  return {
+    validateToken: vi
+      .fn()
+      .mockResolvedValue({ valid: true, userId: 'alice', role: 'USER', error: '' }),
+    login: vi.fn().mockResolvedValue({
+      user: { id: 'alice', email: 'alice@example.com', role: 'USER' },
+      tokens: { accessToken: 'token', refreshToken: 'refresh' },
+    }),
+    register: vi.fn(),
+    refresh: vi.fn(),
+    product: vi.fn(),
+    order: vi.fn().mockResolvedValue({
+      success: true,
+      id: 'order-1',
+      userId: 'bob',
+      totalAmount: 10,
+      status: 'PENDING',
+      error: '',
+    }),
+    orders: vi.fn().mockResolvedValue({ success: true, orders: [], error: '' }),
+  };
+}
+
+async function listen(client: GatewayBackend): Promise<string> {
+  const server = createApp(client).listen(0, '127.0.0.1');
+  servers.push(server);
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+describe('gateway HTTP boundary', () => {
+  it('rejects order reads without authentication before contacting order service', async () => {
+    const client = backend();
+    const url = await listen(client);
+    expect((await fetch(`${url}/api/orders`)).status).toBe(401);
+    expect(client.orders).not.toHaveBeenCalled();
+  });
+  it('hides orders belonging to another customer', async () => {
+    const url = await listen(backend());
+    expect(
+      (await fetch(`${url}/api/orders/order-1`, { headers: { authorization: 'Bearer token' } }))
+        .status,
+    ).toBe(404);
+  });
+  it('scopes order queries to the validated identity and forwards correlation metadata', async () => {
+    const client = backend();
+    const url = await listen(client);
+    const response = await fetch(`${url}/api/orders?userId=bob`, {
+      headers: { authorization: 'Bearer token', 'x-correlation-id': 'request-123' },
+    });
+    expect(response.status).toBe(200);
+    expect(client.orders).toHaveBeenCalledWith('alice', expect.any(Metadata));
+    const call = vi.mocked(client.orders).mock.calls[0];
+    expect(call[1].get('x-correlation-id')).toEqual(['request-123']);
+  });
+  it('maps an unreachable identity service to 503', async () => {
+    const client = backend();
+    vi.mocked(client.validateToken).mockRejectedValue({ code: status.UNAVAILABLE });
+    const url = await listen(client);
+    expect(
+      (await fetch(`${url}/api/orders`, { headers: { authorization: 'Bearer token' } })).status,
+    ).toBe(503);
+  });
+  it('validates credentials before sending them to gRPC', async () => {
+    const client = backend();
+    const url = await listen(client);
+    expect(
+      (
+        await fetch(`${url}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ email: 'bad' }),
+        })
+      ).status,
+    ).toBe(400);
+    expect(client.login).not.toHaveBeenCalled();
+  });
+  it('limits repeated public authentication requests', async () => {
+    const url = await listen(backend());
+    let response: Response | undefined;
+    for (let count = 0; count < 31; count++)
+      response = await fetch(`${url}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+    expect(response?.status).toBe(429);
+  });
+});
+
+describe('generated gRPC client integration', () => {
+  it('loads versioned contracts and carries credentials and metadata over a real gRPC connection', async () => {
+    let correlation: unknown;
+    const handlers: AuthServiceHandlers = {
+      Login: (call, callback) => {
+        correlation = call.metadata.get('x-correlation-id');
+        callback(null, {
+          user: { id: 'alice', email: call.request.email, role: 'USER' },
+          tokens: { accessToken: 'a', refreshToken: 'r' },
+        });
+      },
+      Register: (_call, callback) => callback({ code: status.UNIMPLEMENTED }),
+      Refresh: (_call, callback) => callback({ code: status.UNIMPLEMENTED }),
+      ValidateToken: (_call, callback) =>
+        callback(null, { valid: true, userId: 'alice', role: 'USER', error: '' }),
+    };
+    const definition = loadAuth().auth.v1.AuthService.service;
+    const rpcServer = new GrpcServer();
+    rpcServer.addService(definition, handlers);
+    const port = await new Promise<number>((resolve, reject) =>
+      rpcServer.bindAsync('127.0.0.1:0', ServerCredentials.createInsecure(), (error, bound) =>
+        error ? reject(error) : resolve(bound),
+      ),
+    );
+    const address = `127.0.0.1:${port}`;
+    const client = createBackend({ identity: address, catalog: address, order: address });
+    try {
+      const meta = new Metadata();
+      meta.set('x-correlation-id', 'grpc-request');
+      const result = await client.login({ email: 'alice@example.com', password: 'secret' }, meta);
+      expect(result.user?.email).toBe('alice@example.com');
+      expect(correlation).toEqual(['grpc-request']);
+    } finally {
+      client.close();
+      await new Promise<void>((resolve) => rpcServer.tryShutdown(() => resolve()));
+    }
+  });
+});

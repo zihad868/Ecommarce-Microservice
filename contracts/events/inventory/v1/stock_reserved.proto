@@ -1,0 +1,10 @@
+syntax = "proto3";
+package events.inventory.v1;
+import "common/v1/common.proto";
+
+message StockReserved {
+  common.v1.EventMetadata metadata = 1;
+  string order_id = 2;
+  string reservation_id = 3;
+  string expires_at = 4;
+}

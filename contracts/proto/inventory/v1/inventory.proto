@@ -1,0 +1,23 @@
+syntax = "proto3";
+package inventory.v1;
+
+service InventoryService {
+  rpc ReserveStock(ReserveStockRequest) returns (ReserveStockResponse);
+  rpc ReleaseStock(ReleaseStockRequest) returns (ReleaseStockResponse);
+}
+
+message StockItem {
+  string product_id = 1;
+  uint32 quantity = 2;
+}
+message ReserveStockRequest {
+  string order_id = 1;
+  string idempotency_key = 2;
+  repeated StockItem items = 3;
+}
+message ReserveStockResponse {
+  string reservation_id = 1;
+  string expires_at = 2;
+}
+message ReleaseStockRequest { string reservation_id = 1; }
+message ReleaseStockResponse {}

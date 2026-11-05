@@ -1,0 +1,15 @@
+syntax = "proto3";
+package common.v1;
+
+// Use integer minor units at new monetary boundaries. Currency is ISO 4217.
+message Money {
+  int64 amount_minor = 1;
+  string currency = 2;
+}
+
+message EventMetadata {
+  string event_id = 1;
+  uint32 schema_version = 2;
+  string occurred_at = 3;
+  string correlation_id = 4;
+}
