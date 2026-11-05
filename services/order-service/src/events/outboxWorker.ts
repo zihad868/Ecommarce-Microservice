@@ -1,4 +1,4 @@
-import { ORDER_CREATED_TOPIC } from '@ecommerce/messaging-kit';
+import { EVENT_TOPIC_MAP } from '@ecommerce/messaging-kit';
 import { createLogger, initMetrics } from '@ecommerce/observability';
 import prisma from '../utils/prismaClient';
 import { getKafkaProducer, publishEvent } from './kafka';
@@ -25,11 +25,8 @@ export const processOutboxEvents = async (batchSize = 20): Promise<number> => {
       let published = 0;
       for (const row of rows) {
         try {
-          await publishEvent(
-            row.eventType === 'OrderCreated' ? ORDER_CREATED_TOPIC : row.eventType,
-            row.aggregateId,
-            row.payload,
-          );
+          const targetTopic = EVENT_TOPIC_MAP[row.eventType] ?? row.eventType;
+          await publishEvent(targetTopic, row.aggregateId, row.payload);
         } catch (err) {
           const retryCount = row.retryCount + 1;
           const lastError = err instanceof Error ? err.message : String(err);

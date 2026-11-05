@@ -392,7 +392,7 @@ export const reconcileReservation = (orderId: string) =>
       commit: ['PAID', 'SHIPPED', 'COMPLETED'].includes(order.status),
     };
   });
-export const cancelForStockFailure = (orderId: string) =>
+export const cancelOrderForStockFailure = (orderId: string) =>
   prisma.$transaction(async (tx) => {
     const { count } = await tx.order.updateMany({
       where: { id: orderId, status: { in: ['PENDING', 'CONFIRMED'] } },

@@ -1,12 +1,18 @@
-import { type Consumer, type EachMessagePayload, type Producer } from 'kafkajs';
+import { type Consumer, type Producer } from 'kafkajs';
 import {
-  ORDER_CREATED_DLQ_TOPIC,
-  ORDER_CREATED_TOPIC,
   decodeOrderCreated,
+  decodeStockReleaseRequested,
+  encodeOrderCreated,
+  encodeStockReleased,
+  encodeStockReleaseRequested,
+  encodeStockReservationFailed,
+  runConsumer,
+  TOPICS,
+  type OrderCreatedEvent,
+  type StockReleaseRequestedEvent,
+  createKafka,
 } from '@ecommerce/messaging-kit';
 import { createLogger } from '@ecommerce/observability';
-import { createKafka } from '@ecommerce/messaging-kit';
-import type { OrderCreatedEvent } from '@ecommerce/messaging-kit';
 import config from '../config';
 import prisma from '../utils/prismaClient';
 import * as productService from '../services/productService';
@@ -16,16 +22,17 @@ const logger = createLogger({ serviceName: 'catalog-service' });
 
 const kafka = createKafka(config.KAFKA_CLIENT_ID, config.KAFKA_BROKER.split(','));
 
+type CatalogInboundEvent =
+  | { kind: 'orderCreated'; data: OrderCreatedEvent }
+  | { kind: 'stockReleaseRequested'; data: StockReleaseRequestedEvent };
+
 let consumer: Consumer | null = null;
 let dlqProducer: Producer | null = null;
 let producerConnection: Promise<Producer> | undefined;
 let stopping = false;
 let retryTimer: NodeJS.Timeout | undefined;
-export const getKafkaProducer = () => dlqProducer;
-export const publishEvent = async (topic: string, key: string, data: unknown): Promise<void> => {
-  const producer = await getDlqProducer();
-  await producer.send({ topic, messages: [{ key, value: JSON.stringify(data) }] });
-};
+
+export const getKafkaProducer = (): Producer | null => dlqProducer;
 
 const getDlqProducer = async (): Promise<Producer> => {
   if (dlqProducer) return dlqProducer;
@@ -42,152 +49,118 @@ const getDlqProducer = async (): Promise<Producer> => {
   }
 };
 
-const sendToDlq = async (
-  rawMessage: string,
-  errorReason: string,
-  eventId?: string,
-): Promise<void> => {
-  try {
-    const producer = await getDlqProducer();
-    await producer.send({
-      topic: ORDER_CREATED_DLQ_TOPIC,
-      messages: [
-        {
-          key: eventId ?? 'unknown',
-          value: JSON.stringify({
-            originalMessage: rawMessage,
-            encoding: 'base64',
-            error: errorReason,
-            failedAt: new Date().toISOString(),
-          }),
-        },
-      ],
-    });
-    logger.warn({ eventId, topic: ORDER_CREATED_DLQ_TOPIC }, 'Sent poison-pill message to DLQ');
-  } catch (dlqErr) {
-    logger.error({ dlqErr }, 'Failed to forward to DLQ');
-    throw dlqErr;
-  }
-};
+export const publishEvent = async (topic: string, key: string, data: unknown): Promise<void> => {
+  const producer = await getDlqProducer();
+  let value: Buffer;
+  let contentType = 'application/x-protobuf';
 
-/** Exponential backoff retry: retries up to `maxAttempts` before giving up. */
-const withRetry = async <T>(
-  fn: () => Promise<T>,
-  maxAttempts: number,
-  baseDelayMs: number,
-): Promise<T> => {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err;
-      if (attempt < maxAttempts) {
-        const delay = baseDelayMs * Math.pow(2, attempt - 1);
-        logger.warn({ attempt, maxAttempts, delay }, 'Retrying after transient error');
-        await new Promise((r) => setTimeout(r, delay));
-      }
-    }
+  if (topic === TOPICS.stockReservationFailed) {
+    value = encodeStockReservationFailed(data);
+  } else if (topic === TOPICS.stockReleased) {
+    value = encodeStockReleased(data);
+  } else if (topic === TOPICS.orderCreated) {
+    value = encodeOrderCreated(data);
+  } else if (topic === TOPICS.stockReleaseRequested) {
+    value = encodeStockReleaseRequested(data);
+  } else {
+    value = Buffer.from(JSON.stringify(data));
+    contentType = 'application/json';
   }
-  throw lastError;
+
+  await producer.send({
+    topic,
+    messages: [
+      {
+        key,
+        value,
+        headers: {
+          'content-type': contentType,
+        },
+      },
+    ],
+  });
 };
 
 export const connectKafkaConsumer = async (): Promise<void> => {
   try {
-    await getDlqProducer();
+    const producer = await getDlqProducer();
     consumer = kafka.consumer({ groupId: config.KAFKA_GROUP_ID });
     await consumer.connect();
 
     await consumer.subscribe({
-      topics: [ORDER_CREATED_TOPIC, 'StockReleaseRequested'],
+      topics: [TOPICS.orderCreated, TOPICS.stockReleaseRequested],
       fromBeginning: true,
     });
 
-    logger.info({ topic: ORDER_CREATED_TOPIC }, 'Product Service Kafka Consumer connected');
+    logger.info(
+      { topics: [TOPICS.orderCreated, TOPICS.stockReleaseRequested] },
+      'Product Service Kafka Consumer connected',
+    );
 
-    await consumer.run({
-      eachMessage: async ({ topic, partition, message }: EachMessagePayload) => {
-        const bytes = message.value;
-        if (topic === 'StockReleaseRequested') {
-          const request = JSON.parse(bytes?.toString() ?? '{}') as { orderId?: string };
-          if (!request.orderId) throw new Error('Missing order ID');
-          await releaseStock(request.orderId);
+    await runConsumer<CatalogInboundEvent>({
+      consumer,
+      dlq: producer,
+      topics: [TOPICS.orderCreated, TOPICS.stockReleaseRequested],
+      decode: (topic, bytes) => {
+        if (topic === TOPICS.orderCreated) {
+          return { kind: 'orderCreated', data: decodeOrderCreated(bytes) };
+        }
+        if (topic === TOPICS.stockReleaseRequested) {
+          return { kind: 'stockReleaseRequested', data: decodeStockReleaseRequested(bytes) };
+        }
+        throw new Error(`Unknown topic: ${topic}`);
+      },
+      handle: async (event) => {
+        if (event.kind === 'stockReleaseRequested') {
+          if (!event.data.orderId) throw new Error('Missing order ID');
+          await releaseStock(event.data.orderId);
           return;
         }
-        const raw = bytes?.toString('base64');
-        if (!raw || !bytes) return;
 
-        let event: OrderCreatedEvent;
-        try {
-          event = decodeOrderCreated(bytes);
-        } catch {
-          await sendToDlq(raw, 'Invalid protobuf OrderCreated v1 payload');
-          return;
-        }
-        logger.info(
-          { topic, partition, eventId: event.eventId, orderId: event.orderId },
-          'Kafka event received',
+        const orderCreated = event.data;
+        await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${orderCreated.orderId}, 1))`;
+          const alreadyProcessed = await tx.processedEvent.findUnique({
+            where: { eventId: orderCreated.eventId },
+          });
+
+          if (alreadyProcessed) {
+            logger.info(
+              { eventId: orderCreated.eventId },
+              'Event already processed (idempotent), skipping',
+            );
+            return;
+          }
+
+          const reservation = await tx.stockReservation.findUnique({
+            where: { orderId: orderCreated.orderId },
+          });
+          if (!reservation || reservation.status === 'RELEASED') {
+            await tx.outboxEvent.create({
+              data: {
+                aggregateId: orderCreated.orderId,
+                eventType: 'StockReservationFailed',
+                payload: { eventId: orderCreated.eventId, orderId: orderCreated.orderId },
+              },
+            });
+          }
+
+          await tx.processedEvent.create({
+            data: {
+              eventId: orderCreated.eventId,
+              eventType: orderCreated.eventType,
+            },
+          });
+        });
+
+        await Promise.all(
+          orderCreated.items.map((item) => productService.invalidateProductCache(item.productId)),
         );
 
-        // 2. Process with retries; DLQ only after all retries exhausted
-        try {
-          await withRetry(
-            async () => {
-              // Single DB transaction: idempotency check + all stock decrements + processedEvent
-              await prisma.$transaction(async (tx) => {
-                await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${event.orderId}, 1))`;
-                // 2a. Idempotency Check — inside transaction so concurrent deliveries are safe
-                const alreadyProcessed = await tx.processedEvent.findUnique({
-                  where: { eventId: event.eventId },
-                });
-
-                if (alreadyProcessed) {
-                  logger.info(
-                    { eventId: event.eventId },
-                    'Event already processed (idempotent), skipping',
-                  );
-                  return;
-                }
-
-                // 2b. Atomic stock decrements for every item — all-or-nothing
-                const reservation = await tx.stockReservation.findUnique({
-                  where: { orderId: event.orderId },
-                });
-                if (!reservation || reservation.status === 'RELEASED') {
-                  await tx.outboxEvent.create({
-                    data: {
-                      aggregateId: event.orderId,
-                      eventType: 'StockReservationFailed',
-                      payload: { eventId: event.eventId, orderId: event.orderId },
-                    },
-                  });
-                }
-
-                // 2c. Mark event processed — inside the same transaction
-                await tx.processedEvent.create({
-                  data: {
-                    eventId: event.eventId,
-                    eventType: event.eventType,
-                  },
-                });
-              });
-              await Promise.all(
-                event.items.map((item) => productService.invalidateProductCache(item.productId)),
-              );
-            },
-            3, // max 3 attempts
-            200, // base delay 200 ms → 200, 400, 800 ms
-          );
-
-          logger.info(
-            { orderId: event.orderId, eventId: event.eventId },
-            'Kafka event processed successfully',
-          );
-        } catch (procErr) {
-          const errMsg = procErr instanceof Error ? procErr.message : String(procErr);
-          logger.error({ eventId: event.eventId, errMsg }, 'Processing failed after retries');
-          await sendToDlq(raw, errMsg, event.eventId);
-        }
+        logger.info(
+          { orderId: orderCreated.orderId, eventId: orderCreated.eventId },
+          'Kafka event processed successfully',
+        );
       },
     });
   } catch (err) {

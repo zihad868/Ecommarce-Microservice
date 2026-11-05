@@ -1,8 +1,16 @@
 import { type Producer, type Consumer, Partitioners } from 'kafkajs';
-import { createKafka, encodeOrderCreated, ORDER_CREATED_TOPIC } from '@ecommerce/messaging-kit';
+import {
+  createKafka,
+  encodeOrderCreated,
+  encodeStockReleaseRequested,
+  decodeStockReservationFailed,
+  runConsumer,
+  TOPICS,
+} from '@ecommerce/messaging-kit';
 import config from '../config';
 import { createLogger } from '@ecommerce/observability';
-import { cancelForStockFailure } from '../services/orderService';
+import { cancelOrderForStockFailure } from '../services/orderService';
+
 const logger = createLogger({ serviceName: 'order-service' });
 
 const kafka = createKafka(config.KAFKA_CLIENT_ID, config.KAFKA_BROKER.split(','));
@@ -23,15 +31,17 @@ export const connectKafkaProducer = async (): Promise<void> => {
     consumer = kafka.consumer({ groupId: 'order-stock-events-v1' });
     await consumer.connect();
     await consumer.subscribe({
-      topics: ['StockReservationFailed', 'StockReleased'],
+      topics: [TOPICS.stockReservationFailed],
       fromBeginning: true,
     });
-    await consumer.run({
-      eachMessage: async ({ message }) => {
-        if (!message.value) return;
-        const event = JSON.parse(message.value.toString()) as { orderId?: string };
+    await runConsumer({
+      consumer,
+      dlq: producer,
+      topics: [TOPICS.stockReservationFailed],
+      decode: (_topic, bytes) => decodeStockReservationFailed(bytes),
+      handle: async (event) => {
         if (!event.orderId) throw new Error('Missing order ID');
-        await cancelForStockFailure(event.orderId);
+        await cancelOrderForStockFailure(event.orderId);
       },
     });
     logger.info('Order Kafka connected');
@@ -55,15 +65,25 @@ export const publishEvent = async (topic: string, key: string, data: unknown): P
     throw new Error('Kafka Producer is not connected');
   }
 
+  let value: Buffer;
+  let contentType = 'application/x-protobuf';
+  if (topic === TOPICS.orderCreated) {
+    value = encodeOrderCreated(data);
+  } else if (topic === TOPICS.stockReleaseRequested) {
+    value = encodeStockReleaseRequested(data);
+  } else {
+    value = Buffer.from(JSON.stringify(data));
+    contentType = 'application/json';
+  }
+
   await producer.send({
     topic,
     messages: [
       {
         key,
-        value: topic === ORDER_CREATED_TOPIC ? encodeOrderCreated(data) : JSON.stringify(data),
+        value,
         headers: {
-          'content-type':
-            topic === ORDER_CREATED_TOPIC ? 'application/x-protobuf' : 'application/json',
+          'content-type': contentType,
         },
       },
     ],
