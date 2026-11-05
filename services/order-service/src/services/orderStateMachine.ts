@@ -1,5 +1,5 @@
 import httpStatus from 'http-status';
-import { ApiError } from '@ecommerce/common';
+import { ApiError } from '@ecommerce/errors';
 import { OrderStatus } from '../utils/prismaClient';
 
 const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {

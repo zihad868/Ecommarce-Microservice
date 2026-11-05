@@ -1,6 +1,6 @@
 import { loadAuth } from '@ecommerce/proto-gen';
 import type { AuthServiceHandlers } from '@ecommerce/proto-gen';
-import { bindGrpc, unary } from '@ecommerce/grpc-kit';
+import { bindGrpc, unary, userContext } from '@ecommerce/grpc-kit';
 import { ApiError } from '@ecommerce/errors';
 import type { z } from 'zod';
 import config from '../config';
@@ -15,6 +15,17 @@ function validate<T extends z.ZodTypeAny>(schema: T, input: unknown): z.infer<T>
 
 export const startGrpcServer = () => {
   const handlers: AuthServiceHandlers = {
+    Logout: unary(async (request, call) => {
+      const user = userContext(call.metadata);
+      await authService.logoutUser(request.refreshToken, user.userId);
+      return {};
+    }),
+    GetUser: unary(async (_request, call) => {
+      const context = userContext(call.metadata);
+      const user = await authService.getUserById(context.userId);
+      if (!user) throw new ApiError(404, 'User not found');
+      return { id: user.id, email: user.email, role: user.role };
+    }),
     ValidateToken: unary(async (request) => authService.validateToken(request.token)),
     Register: unary(async (request) => authService.registerUser(validate(registerSchema, request))),
     Login: unary(async (request) => {

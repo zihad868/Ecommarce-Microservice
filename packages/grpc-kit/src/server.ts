@@ -1,4 +1,5 @@
-import { Server, ServerCredentials } from '@grpc/grpc-js';
+import { Server } from '@grpc/grpc-js';
+import { getServerCredentials } from './grpc/credentials';
 import type {
   ServiceDefinition,
   UntypedServiceImplementation,
@@ -12,7 +13,7 @@ export async function bindGrpc(
   definition: ServiceDefinition,
   handlers: UntypedServiceImplementation,
   address: string,
-  credentials = ServerCredentials.createInsecure(),
+  credentials = getServerCredentials(),
 ): Promise<Server> {
   const server = new Server();
   server.addService(definition, handlers);

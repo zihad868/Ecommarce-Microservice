@@ -1,19 +1,12 @@
-import * as grpc from '@grpc/grpc-js';
-import { loadAuth, loadProduct } from '@ecommerce/proto-gen';
+import { loadProduct } from '@ecommerce/proto-gen';
 import config from '../config';
-
-const authProto = loadAuth();
+import { ApiError, grpcToHttp } from '@ecommerce/errors';
 
 const productProto = loadProduct();
 
-export const authClient = new authProto.auth.v1.AuthService(
-  config.AUTH_GRPC_URL,
-  grpc.credentials.createInsecure(),
-);
-
 export const productClient = new productProto.product.v1.ProductService(
   config.PRODUCT_GRPC_URL,
-  grpc.credentials.createInsecure(),
+  getClientCredentials(),
 );
 
 export interface ProductResponse {
@@ -25,14 +18,7 @@ export interface ProductResponse {
   error: string;
 }
 
-export interface ValidateTokenResponse {
-  valid: boolean;
-  userId: string;
-  role: string;
-  error: string;
-}
-
-import { invokeResilientGrpc } from '@ecommerce/common';
+import { invokeResilientGrpc, getClientCredentials } from '@ecommerce/grpc-kit';
 
 // Wrapper for gRPC product check with deadline, retries with jitter, and circuit breaker
 export const getProductDetails = (
@@ -51,3 +37,15 @@ export const getProductDetails = (
     { timeoutMs, maxRetries: 3 },
   );
 };
+
+export const reserveStock = (orderId: string, items: { productId: string; quantity: number }[]) =>
+  new Promise<void>((resolve, reject) => {
+    productClient.ReserveStock(
+      { orderId, items },
+      { deadline: new Date(Date.now() + 10_000) },
+      (error) => {
+        if (error) reject(new ApiError(grpcToHttp(error.code), error.details));
+        else resolve();
+      },
+    );
+  });

@@ -29,7 +29,8 @@
     "contracts:lint": "buf lint contracts",
     "contracts:breaking": "buf breaking contracts --against .git#branch=main,subdir=contracts",
     "check": "npm run contracts:check && npm run lint && npm run typecheck && npm test",
-    "dev:gateway": "npm run dev --workspace api-gateway"
+    "dev:gateway": "npm run dev --workspace api-gateway",
+    "test:integration": "node tools/run-integration.mjs"
   },
   "devDependencies": {
     "@bufbuild/buf": "^1.50.0",

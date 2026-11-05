@@ -9,12 +9,8 @@ const envSchema = z.object({
   PORT: port.default(3001),
   GRPC_PORT: port.default(50051),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  JWT_SECRET: z
-    .string({ required_error: 'JWT_SECRET is required' })
-    .min(32, 'JWT_SECRET must be at least 32 characters for security'),
-  JWT_REFRESH_SECRET: z
-    .string({ required_error: 'JWT_REFRESH_SECRET is required' })
-    .min(32, 'JWT_REFRESH_SECRET must be at least 32 characters for security'),
+  JWT_PRIVATE_KEY: z.string().min(1),
+  JWT_PUBLIC_KEY: z.string().min(1),
   JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
   REDIS_HOST: z.string().default('localhost'),

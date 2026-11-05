@@ -1,6 +1,7 @@
+import { localTokenVerifier } from './tokenVerifier';
 import { z } from 'zod';
 import { parseEnv, port } from '@ecommerce/config';
-import { createRedisClient, createRedisRateLimiter } from '@ecommerce/common';
+import { createRedisClient, createRedisRateLimiter } from '@ecommerce/cache-kit';
 import { registerGracefulShutdown } from '@ecommerce/grpc-kit';
 import {
   createLogger,
@@ -16,23 +17,29 @@ const env = parseEnv(
   'api-gateway',
   z.object({
     PORT: port.default(8081),
+    JWT_PUBLIC_KEY: z.string().min(1),
     AUTH_GRPC_URL: z.string().default('localhost:50051'),
     PRODUCT_GRPC_URL: z.string().default('localhost:50052'),
     ORDER_GRPC_URL: z.string().default('localhost:50053'),
     REDIS_HOST: z.string().default('localhost'),
     REDIS_PORT: port.default(6379),
+    REDIS_PASSWORD: z.string().optional(),
+    GATEWAY_REQUEST_LIMIT: z.coerce.number().int().positive().default(300),
+    AUTH_REQUEST_LIMIT: z.coerce.number().int().positive().default(30),
   }),
 );
 const logger = createLogger({ serviceName: 'api-gateway' });
-const backend = createBackend({
-  identity: env.AUTH_GRPC_URL,
-  catalog: env.PRODUCT_GRPC_URL,
-  order: env.ORDER_GRPC_URL,
-});
 const redis = createRedisClient({
   serviceName: 'api-gateway',
   host: env.REDIS_HOST,
   port: env.REDIS_PORT,
+  password: env.REDIS_PASSWORD,
+});
+const backend = createBackend({
+  identity: env.AUTH_GRPC_URL,
+  verifyToken: localTokenVerifier(env.JWT_PUBLIC_KEY, redis),
+  catalog: env.PRODUCT_GRPC_URL,
+  order: env.ORDER_GRPC_URL,
 });
 initMetrics('api-gateway');
 const app = express();
@@ -40,18 +47,18 @@ app.use(metricsMiddleware());
 app.use(
   createApp(backend, {
     ready: async () => {
-      await Promise.all([backend.ready(), redis.ping()]);
+      await backend.ready();
     },
     limiter: createRedisRateLimiter({
       redisClient: redis,
       windowMs: 60_000,
-      max: 300,
+      max: env.GATEWAY_REQUEST_LIMIT,
       prefix: 'rl:gateway:',
     }),
     authLimiter: createRedisRateLimiter({
       redisClient: redis,
       windowMs: 900_000,
-      max: 30,
+      max: env.AUTH_REQUEST_LIMIT,
       prefix: 'rl:gateway:auth:',
     }),
   }),

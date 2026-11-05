@@ -1,4 +1,4 @@
-import { credentials } from '@grpc/grpc-js';
+import { getClientCredentials } from '@ecommerce/grpc-kit';
 import type { Client, ServiceError, Metadata } from '@grpc/grpc-js';
 import { loadAuth, loadProduct, loadOrder } from '@ecommerce/proto-gen';
 
@@ -37,6 +37,29 @@ export interface Credentials {
   password: string;
 }
 export interface GatewayBackend {
+  logout(this: void, refreshToken: string, context: Metadata): Promise<unknown>;
+  me(this: void, context: Metadata): Promise<{ id: string; email: string; role: string }>;
+  createOrder(
+    this: void,
+    items: { productId: string; quantity: number }[],
+    key: string,
+    context: Metadata,
+  ): Promise<OrderResult>;
+  payOrder(this: void, orderId: string, method: string, context: Metadata): Promise<OrderResult>;
+  updateOrder(this: void, orderId: string, status: string, context: Metadata): Promise<OrderResult>;
+  products(
+    this: void,
+    query: string,
+    context: Metadata,
+  ): Promise<{ products: ProductResult[]; metaJson: string }>;
+  mutateProduct(
+    this: void,
+    action: 'create' | 'update' | 'delete',
+    id: string,
+    data: string,
+    context: Metadata,
+  ): Promise<unknown>;
+
   validateToken(this: void, token: string, context: Metadata): Promise<TokenResult>;
   login(this: void, input: Credentials, context: Metadata): Promise<SessionResult>;
   register(this: void, input: Credentials, context: Metadata): Promise<SessionResult>;
@@ -55,16 +78,14 @@ export function createBackend(options: {
   catalog: string;
   order: string;
   timeoutMs?: number;
+  verifyToken?: (token: string) => Promise<TokenResult>;
 }): GatewayBackend & { close(): void; ready(): Promise<void> } {
-  const auth = new (loadAuth().auth.v1.AuthService)(options.identity, credentials.createInsecure());
+  const auth = new (loadAuth().auth.v1.AuthService)(options.identity, getClientCredentials());
   const product = new (loadProduct().product.v1.ProductService)(
     options.catalog,
-    credentials.createInsecure(),
+    getClientCredentials(),
   );
-  const order = new (loadOrder().order.v1.OrderService)(
-    options.order,
-    credentials.createInsecure(),
-  );
+  const order = new (loadOrder().order.v1.OrderService)(options.order, getClientCredentials());
   const clients: Client[] = [auth, product, order];
   const deadline = () => new Date(Date.now() + (options.timeoutMs ?? 3000));
   function call<T>(
@@ -79,10 +100,42 @@ export function createBackend(options: {
     );
   }
   return {
-    validateToken: (token, meta) =>
+    logout: (refreshToken, meta) =>
       call((cb) => {
-        auth.ValidateToken({ token }, meta, { deadline: deadline() }, cb);
+        auth.Logout({ refreshToken }, meta, { deadline: deadline() }, cb);
       }),
+    me: (meta) =>
+      call((cb) => {
+        auth.GetUser({}, meta, { deadline: deadline() }, cb);
+      }),
+    createOrder: (items, idempotencyKey, meta) =>
+      call((cb) => {
+        order.CreateOrder({ items, idempotencyKey }, meta, { deadline: deadline() }, cb);
+      }),
+    payOrder: (orderId, paymentMethod, meta) =>
+      call((cb) => {
+        order.PayOrder({ orderId, paymentMethod }, meta, { deadline: deadline() }, cb);
+      }),
+    updateOrder: (orderId, status, meta) =>
+      call((cb) => {
+        order.UpdateOrderStatus({ orderId, status }, meta, { deadline: deadline() }, cb);
+      }),
+    products: (queryJson, meta) =>
+      call((cb) => {
+        product.ListProducts({ queryJson }, meta, { deadline: deadline() }, cb);
+      }),
+    mutateProduct: (action, productId, dataJson, meta) =>
+      call((cb) => {
+        if (action === 'delete')
+          product.DeleteProduct({ productId }, meta, { deadline: deadline() }, cb);
+        else if (action === 'create')
+          product.CreateProduct({ productId, dataJson }, meta, { deadline: deadline() }, cb);
+        else product.UpdateProduct({ productId, dataJson }, meta, { deadline: deadline() }, cb);
+      }),
+    validateToken: (token) => {
+      if (!options.verifyToken) throw new Error('Local JWT verifier is required');
+      return options.verifyToken(token);
+    },
     login: (input, meta) =>
       call((cb) => {
         auth.Login(input, meta, { deadline: deadline() }, cb);

@@ -11,11 +11,12 @@
   },
   "dependencies": {
     "@ecommerce/proto-gen": "*",
-    "zod": "^3.24.2",
-    "kafkajs": "^2.2.4"
+    "aws-msk-iam-sasl-signer-js": "^1.0.3",
+    "kafkajs": "^2.2.4",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@types/node": "^22.15.30",
-    "@types/express": "^5.0.3"
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.15.30"
   }
 }

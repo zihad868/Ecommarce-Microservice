@@ -1,11 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 namespace: ecommerce-prod
-
 resources:
   - ../../base
-
+  - external-secrets.yaml
+  - managed-data-egress.yaml
+  - service-accounts.yaml
 patches:
   - target:
       kind: Deployment
@@ -28,3 +28,174 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 3
+  - target:
+      kind: Deployment
+      name: identity-service
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: identity-service
+      spec:
+        template:
+          spec:
+            containers:
+              - name: identity-service
+                env:
+                  - name: GRPC_TLS_REQUIRED
+                    value: "true"
+                  - name: GRPC_TLS_CA
+                    value: /var/run/grpc/ca.crt
+                  - name: GRPC_TLS_CERT
+                    value: /var/run/grpc/tls.crt
+                  - name: GRPC_TLS_KEY
+                    value: /var/run/grpc/tls.key
+                volumeMounts:
+                  - name: grpc-tls
+                    mountPath: /var/run/grpc
+                    readOnly: true
+            volumes:
+              - name: grpc-tls
+                secret:
+                  secretName: identity-service-tls
+  - target:
+      kind: Deployment
+      name: catalog-service
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: catalog-service
+      spec:
+        template:
+          spec:
+            containers:
+              - name: catalog-service
+                env:
+                  - name: GRPC_TLS_REQUIRED
+                    value: "true"
+                  - name: GRPC_TLS_CA
+                    value: /var/run/grpc/ca.crt
+                  - name: GRPC_TLS_CERT
+                    value: /var/run/grpc/tls.crt
+                  - name: GRPC_TLS_KEY
+                    value: /var/run/grpc/tls.key
+                volumeMounts:
+                  - name: grpc-tls
+                    mountPath: /var/run/grpc
+                    readOnly: true
+            volumes:
+              - name: grpc-tls
+                secret:
+                  secretName: catalog-service-tls
+  - target:
+      kind: Deployment
+      name: order-service
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: order-service
+      spec:
+        template:
+          spec:
+            containers:
+              - name: order-service
+                env:
+                  - name: GRPC_TLS_REQUIRED
+                    value: "true"
+                  - name: GRPC_TLS_CA
+                    value: /var/run/grpc/ca.crt
+                  - name: GRPC_TLS_CERT
+                    value: /var/run/grpc/tls.crt
+                  - name: GRPC_TLS_KEY
+                    value: /var/run/grpc/tls.key
+                volumeMounts:
+                  - name: grpc-tls
+                    mountPath: /var/run/grpc
+                    readOnly: true
+            volumes:
+              - name: grpc-tls
+                secret:
+                  secretName: order-service-tls
+  - target:
+      kind: Deployment
+      name: api-gateway
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: api-gateway
+      spec:
+        template:
+          spec:
+            containers:
+              - name: api-gateway
+                env:
+                  - name: GRPC_TLS_REQUIRED
+                    value: "true"
+                  - name: GRPC_TLS_CA
+                    value: /var/run/grpc/ca.crt
+                  - name: GRPC_TLS_CERT
+                    value: /var/run/grpc/tls.crt
+                  - name: GRPC_TLS_KEY
+                    value: /var/run/grpc/tls.key
+                volumeMounts:
+                  - name: grpc-tls
+                    mountPath: /var/run/grpc
+                    readOnly: true
+            volumes:
+              - name: grpc-tls
+                secret:
+                  secretName: api-gateway-tls
+  - target:
+      kind: Deployment
+      name: catalog-service
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: catalog-service
+      spec:
+        template:
+          spec:
+            serviceAccountName: catalog-service
+            containers:
+              - name: catalog-service
+                env:
+                  - name: KAFKA_MSK_IAM
+                    value: "true"
+                  - name: AWS_REGION
+                    value: ap-southeast-1
+                  - name: REDIS_TLS
+                    value: "true"
+  - target:
+      kind: Deployment
+      name: order-service
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: order-service
+      spec:
+        template:
+          spec:
+            serviceAccountName: order-service
+            containers:
+              - name: order-service
+                env:
+                  - name: KAFKA_MSK_IAM
+                    value: "true"
+                  - name: AWS_REGION
+                    value: ap-southeast-1
+                  - name: REDIS_TLS
+                    value: "true"
+images:
+  - name: identity-service
+    newTag: dev
+  - name: catalog-service
+    newTag: dev
+  - name: order-service
+    newTag: dev
+  - name: api-gateway
+    newTag: dev

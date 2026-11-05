@@ -1,24 +1,50 @@
-import { type Producer, Partitioners } from 'kafkajs';
+import { type Producer, type Consumer, Partitioners } from 'kafkajs';
 import { createKafka, encodeOrderCreated, ORDER_CREATED_TOPIC } from '@ecommerce/messaging-kit';
 import config from '../config';
+import { createLogger } from '@ecommerce/observability';
+import { cancelForStockFailure } from '../services/orderService';
+const logger = createLogger({ serviceName: 'order-service' });
 
 const kafka = createKafka(config.KAFKA_CLIENT_ID, config.KAFKA_BROKER.split(','));
 
 let producer: Producer | null = null;
+let consumer: Consumer | undefined;
+let stopping = false;
+let retryTimer: NodeJS.Timeout | undefined;
 
 export const connectKafkaProducer = async (): Promise<void> => {
   try {
-    producer = kafka.producer({
+    const connected = kafka.producer({
+      idempotent: true,
       createPartitioner: Partitioners.DefaultPartitioner,
     });
-    await producer.connect();
-    console.log('Order Service Kafka Producer connected');
+    await connected.connect();
+    producer = connected;
+    consumer = kafka.consumer({ groupId: 'order-stock-events-v1' });
+    await consumer.connect();
+    await consumer.subscribe({
+      topics: ['StockReservationFailed', 'StockReleased'],
+      fromBeginning: true,
+    });
+    await consumer.run({
+      eachMessage: async ({ message }) => {
+        if (!message.value) return;
+        const event = JSON.parse(message.value.toString()) as { orderId?: string };
+        if (!event.orderId) throw new Error('Missing order ID');
+        await cancelForStockFailure(event.orderId);
+      },
+    });
+    logger.info('Order Kafka connected');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('Kafka Producer connection failed, retrying in 5s...', msg);
-    setTimeout(() => {
-      void connectKafkaProducer();
-    }, 5000);
+    logger.error({ msg }, 'Kafka connection failed');
+    await consumer?.disconnect().catch(() => undefined);
+    await producer?.disconnect().catch(() => undefined);
+    producer = null;
+    if (!stopping)
+      retryTimer = setTimeout(() => {
+        void connectKafkaProducer();
+      }, 5000);
   }
 };
 
@@ -43,12 +69,16 @@ export const publishEvent = async (topic: string, key: string, data: unknown): P
     ],
   });
 
-  console.log(`[Kafka] Published event to "${topic}" with key "${key}"`);
+  logger.debug({ topic, key }, 'Published event');
 };
 
 export const disconnectKafkaProducer = async (): Promise<void> => {
+  stopping = true;
+  if (retryTimer) clearTimeout(retryTimer);
+  await consumer?.disconnect();
   if (producer) {
     await producer.disconnect();
-    console.log('Order Service Kafka Producer disconnected');
+    logger.info('Order Kafka disconnected');
   }
+  producer = null;
 };

@@ -1,43 +1,43 @@
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
+import exec from 'k6/execution';
 
-export const options = {
+const base = __ENV.GATEWAY_URL || 'http://localhost:8081';
+const peak = Number(__ENV.TARGET_RPS || 5000);
+const scenario = (fraction, execName) => ({
+  executor: 'ramping-arrival-rate', exec: execName, startRate: Math.ceil(peak * fraction * 0.1),
+  timeUnit: '1s', preAllocatedVUs: Math.ceil(peak * fraction), maxVUs: Math.ceil(peak * fraction * 3),
   stages: [
-    { duration: '30s', target: 20 }, // Ramp-up to 20 users
-    { duration: '1m', target: 50 },  // Maintain 50 users
-    { duration: '20s', target: 0 },  // Ramp-down
+    { duration: '2m', target: Math.ceil(3000 * fraction) },
+    { duration: '3m', target: Math.ceil(peak * fraction) },
+    { duration: '3m', target: Math.ceil(peak * fraction) },
+    { duration: '1m', target: 0 },
   ],
-  thresholds: {
-    http_req_duration: ['p(95)<300', 'p(99)<800'], // 95% of requests under 300ms
-    http_req_failed: ['rate<0.01'],                // Error rate under 1%
-  },
+});
+export const options = {
+  scenarios: { browse: scenario(0.8, 'browse'), login: scenario(0.05, 'login'), checkout: scenario(0.15, 'checkout') },
+  thresholds: { http_req_duration: ['p(95)<300', 'p(99)<800'], http_req_failed: ['rate<0.01'], dropped_iterations: ['count==0'] },
 };
-
-const BASE_AUTH_URL = __ENV.AUTH_URL || 'http://localhost:3001';
-const BASE_PRODUCT_URL = __ENV.PRODUCT_URL || 'http://localhost:3002';
-const BASE_ORDER_URL = __ENV.ORDER_URL || 'http://localhost:3003';
-
-export default function () {
-  const correlationId = `k6-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-
-  const params = {
-    headers: {
-      'Content-Type': 'application/json',
-      'x-correlation-id': correlationId,
-    },
-  };
-
-  // 1. Health check & Metrics check
-  const healthRes = http.get(`${BASE_PRODUCT_URL}/health/live`, params);
-  check(healthRes, {
-    'health live returns 200': (r) => r.status === 200,
+const headers = { 'Content-Type': 'application/json' };
+const credentials = () => JSON.stringify({ email: __ENV.LOAD_EMAIL, password: __ENV.LOAD_PASSWORD });
+export function setup() {
+  if (!__ENV.LOAD_EMAIL || !__ENV.LOAD_PASSWORD || !__ENV.PRODUCT_ID) throw new Error('Provide LOAD_EMAIL, LOAD_PASSWORD and PRODUCT_ID for seeded test data');
+  const response = http.post(`${base}/api/auth/login`, credentials(), { headers });
+  if (response.status !== 200) throw new Error('Test login failed');
+  return { token: response.json('data.tokens.accessToken'), runId: Date.now() };
+}
+export function browse() {
+  const response = http.get(`${base}/api/products?limit=10`, { tags: { name: 'browse' } });
+  check(response, { 'browse succeeds': (r) => r.status === 200 });
+}
+export function login() {
+  const response = http.post(`${base}/api/auth/login`, credentials(), { headers, tags: { name: 'login' } });
+  check(response, { 'login succeeds': (r) => r.status === 200 });
+}
+export function checkout(data) {
+  const response = http.post(`${base}/api/orders`, JSON.stringify({ items: [{ productId: __ENV.PRODUCT_ID, quantity: 1 }] }), {
+    headers: { ...headers, Authorization: `Bearer ${data.token}`, 'Idempotency-Key': `k6-${data.runId}-${exec.scenario.name}-${exec.scenario.iterationInTest}` },
+    tags: { name: 'create-order' },
   });
-
-  // 2. Product listing (versioned cached endpoint)
-  const listRes = http.get(`${BASE_PRODUCT_URL}/api/products?page=1&limit=10`, params);
-  check(listRes, {
-    'product list returns 200': (r) => r.status === 200,
-  });
-
-  sleep(1);
+  check(response, { 'order reserved and created': (r) => r.status === 201 });
 }

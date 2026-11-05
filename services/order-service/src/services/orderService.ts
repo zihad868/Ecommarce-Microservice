@@ -1,8 +1,10 @@
+import { createHash } from 'node:crypto';
 import httpStatus from 'http-status';
 import { v4 as uuidv4 } from 'uuid';
-import { ApiError, type OrderCreatedEvent, type OrderItemEvent } from '@ecommerce/common';
+import { ApiError } from '@ecommerce/errors';
+import { type OrderCreatedEvent, type OrderItemEvent } from '@ecommerce/messaging-kit';
 import prisma, { OrderStatus, Prisma, type Order } from '../utils/prismaClient';
-import { getProductDetails } from '../grpc/grpcClients';
+import { getProductDetails, reserveStock } from '../grpc/grpcClients';
 import { validateTransition } from './orderStateMachine';
 import type {
   CreateOrderItemInput,
@@ -10,13 +12,22 @@ import type {
   PayOrderInput,
   UpdateOrderStatusInput,
 } from '../validators/orderValidators';
-import { logger } from '../utils/logger';
+import { createLogger } from '@ecommerce/observability';
+const logger = createLogger({ serviceName: 'order-service' });
 
 export const createOrder = async (
   userId: string,
   items: CreateOrderItemInput[],
   idempotencyKey?: string,
 ): Promise<Order> => {
+  const requestHash = createHash('sha256')
+    .update(JSON.stringify([...items].sort((a, b) => a.productId.localeCompare(b.productId))))
+    .digest('hex');
+  const replay = (record: { requestHash: string; response: Prisma.JsonValue }): Order => {
+    if (record.requestHash !== requestHash)
+      throw new ApiError(422, 'Idempotency key reused with a different request');
+    return mapOrderResponse(record.response as unknown as Order);
+  };
   // 1. Idempotency Key check — scoped to userId to prevent cross-user leakage
   if (idempotencyKey) {
     const existing = await prisma.idempotencyRecord.findUnique({
@@ -24,7 +35,7 @@ export const createOrder = async (
     });
     if (existing) {
       logger.info({ idempotencyKey, userId }, 'Returning cached order for idempotency key');
-      return existing.response as unknown as Order;
+      return replay(existing);
     }
   }
 
@@ -53,15 +64,6 @@ export const createOrder = async (
       );
     }
 
-    if (productResponse.stock < item.quantity) {
-      throw new ApiError(
-        httpStatus.CONFLICT,
-        `Insufficient stock for product '${productResponse.name}'. Available: ${String(
-          productResponse.stock,
-        )}, Requested: ${String(item.quantity)}`,
-      );
-    }
-
     const itemPrice = new Prisma.Decimal(productResponse.price);
     const lineTotal = itemPrice.mul(item.quantity);
     totalAmount = totalAmount.add(lineTotal);
@@ -76,66 +78,85 @@ export const createOrder = async (
 
   // 3. Execute atomic transaction: Order + OrderItems + OutboxEvent + IdempotencyRecord
   const eventId = uuidv4();
+  const orderId = idempotencyKey
+    ? createHash('sha256')
+        .update(JSON.stringify([userId, idempotencyKey]))
+        .digest('hex')
+    : uuidv4();
 
   try {
-    const createdOrder = await prisma.$transaction(async (tx) => {
-      const order = await tx.order.create({
-        data: {
-          userId,
-          totalAmount,
-          status: OrderStatus.PENDING,
-          idempotencyKey,
-          items: {
-            create: validatedItems.map((vi) => ({
-              productId: vi.productId,
-              quantity: vi.quantity,
-              price: vi.price,
-            })),
-          },
-        },
-        include: {
-          items: true,
-        },
-      });
-
-      const eventPayload: OrderCreatedEvent = {
-        eventId,
-        version: 1,
-        eventType: 'OrderCreated',
-        timestamp: new Date().toISOString(),
-        orderId: order.id,
-        userId,
-        items: validatedItems.map((vi): OrderItemEvent => ({
-          productId: vi.productId,
-          quantity: vi.quantity,
-          price: Number(vi.price),
-        })),
-        totalAmount: Number(totalAmount),
-      };
-
-      await tx.outboxEvent.create({
-        data: {
-          id: eventId,
-          aggregateId: order.id,
-          eventType: 'OrderCreated',
-          payload: eventPayload,
-        },
-      });
-
-      if (idempotencyKey) {
-        await tx.idempotencyRecord.create({
+    const createdOrder = await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${orderId}, 0))`;
+        if (idempotencyKey) {
+          const existing = await tx.idempotencyRecord.findUnique({
+            where: { userId_key: { userId, key: idempotencyKey } },
+          });
+          if (existing) return replay(existing);
+        }
+        await reserveStock(orderId, items);
+        const order = await tx.order.create({
           data: {
-            key: idempotencyKey,
+            id: orderId,
             userId,
-            requestHash: '',
-            statusCode: 201,
-            response: order,
+            totalAmount,
+            status: OrderStatus.PENDING,
+            idempotencyKey,
+            items: {
+              create: validatedItems.map((vi) => ({
+                productId: vi.productId,
+                quantity: vi.quantity,
+                price: vi.price,
+              })),
+            },
+          },
+          include: {
+            items: true,
           },
         });
-      }
 
-      return order;
-    });
+        const eventPayload: OrderCreatedEvent = {
+          eventId,
+          version: 1,
+          eventType: 'OrderCreated',
+          timestamp: new Date().toISOString(),
+          orderId: order.id,
+          userId,
+          items: validatedItems.map((vi): OrderItemEvent => ({
+            productId: vi.productId,
+            quantity: vi.quantity,
+            price: Number(vi.price),
+          })),
+          totalAmount: Number(totalAmount),
+        };
+
+        await tx.outboxEvent.create({
+          data: {
+            id: eventId,
+            aggregateId: order.id,
+            eventType: 'OrderCreated',
+            payload: eventPayload,
+          },
+        });
+
+        if (idempotencyKey) {
+          await tx.idempotencyRecord.create({
+            data: {
+              key: idempotencyKey,
+              userId,
+              requestHash,
+              statusCode: 201,
+              response: JSON.parse(
+                JSON.stringify(mapOrderResponse(order)),
+              ) as Prisma.InputJsonValue,
+            },
+          });
+        }
+
+        return mapOrderResponse(order);
+      },
+      { timeout: 30_000, maxWait: 30_000 },
+    );
 
     return createdOrder;
   } catch (err) {
@@ -153,7 +174,7 @@ export const createOrder = async (
       const existing = await prisma.idempotencyRecord.findUnique({
         where: { userId_key: { userId, key: idempotencyKey } },
       });
-      if (existing) return existing.response as unknown as Order;
+      if (existing) return replay(existing);
     }
     throw err;
   }
@@ -254,10 +275,14 @@ export const updateOrderStatus = async (
 
   validateTransition(order.status, targetStatus);
 
-  const updated = await prisma.order.update({
-    where: { id: orderId },
-    data: { status: targetStatus },
-    include: { items: true },
+  const updated = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.order.updateMany({
+      where: { id: orderId, status: order.status },
+      data: { status: targetStatus },
+    });
+    if (count === 0) throw new ApiError(httpStatus.CONFLICT, 'Order changed, please retry');
+    if (targetStatus === OrderStatus.CANCELLED) await enqueueStockRelease(tx, orderId);
+    return tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true } });
   });
 
   return updated;
@@ -288,26 +313,79 @@ export const payOrder = async (
     'Processing payment',
   );
 
-  // State machine: if PENDING, advance to CONFIRMED first, then PAID.
-  // If already CONFIRMED, advance directly to PAID.
-  let currentStatus = order.status;
-
-  if (currentStatus === OrderStatus.PENDING) {
-    validateTransition(currentStatus, OrderStatus.CONFIRMED);
-    await prisma.order.update({
-      where: { id: orderId },
-      data: { status: OrderStatus.CONFIRMED },
+  const updated = await prisma.$transaction(async (tx) => {
+    let currentStatus = order.status;
+    if (currentStatus === OrderStatus.PENDING) {
+      validateTransition(currentStatus, OrderStatus.CONFIRMED);
+      const { count } = await tx.order.updateMany({
+        where: { id: orderId, status: currentStatus },
+        data: { status: OrderStatus.CONFIRMED },
+      });
+      if (count === 0) throw new ApiError(httpStatus.CONFLICT, 'Order changed, please retry');
+      currentStatus = OrderStatus.CONFIRMED;
+    }
+    validateTransition(currentStatus, OrderStatus.PAID);
+    const { count } = await tx.order.updateMany({
+      where: { id: orderId, status: currentStatus },
+      data: { status: OrderStatus.PAID },
     });
-    currentStatus = OrderStatus.CONFIRMED;
-  }
-
-  validateTransition(currentStatus, OrderStatus.PAID);
-  const updated = await prisma.order.update({
-    where: { id: orderId },
-    data: { status: OrderStatus.PAID },
-    include: { items: true },
+    if (count === 0) throw new ApiError(httpStatus.CONFLICT, 'Order changed, please retry');
+    return tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true } });
   });
 
   logger.info({ orderId }, 'Payment captured successfully');
   return updated;
 };
+
+// Both the initial response and JSON replay pass through this hydration boundary.
+export const mapOrderResponse = (order: Order): Order => ({
+  ...order,
+  totalAmount: new Prisma.Decimal(order.totalAmount),
+  createdAt: new Date(order.createdAt),
+  updatedAt: new Date(order.updatedAt),
+  ...('items' in order && Array.isArray(order.items)
+    ? {
+        items: order.items.map((item: { price: Prisma.Decimal }) => ({
+          ...item,
+          price: new Prisma.Decimal(item.price),
+        })),
+      }
+    : {}),
+});
+const enqueueStockRelease = (tx: Prisma.TransactionClient, orderId: string) =>
+  tx.outboxEvent.create({
+    data: {
+      aggregateId: orderId,
+      eventType: 'StockReleaseRequested',
+      payload: { eventId: uuidv4(), orderId },
+    },
+  });
+export const reconcileReservation = (orderId: string) =>
+  prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${orderId}, 0))`;
+    const order = await tx.order.findUnique({ where: { id: orderId } });
+    if (!order) return { release: true, commit: false };
+    if (order.status === 'PENDING' && order.createdAt.getTime() <= Date.now() - 15 * 60_000) {
+      const { count } = await tx.order.updateMany({
+        where: { id: orderId, status: 'PENDING' },
+        data: { status: 'CANCELLED' },
+      });
+      if (count) {
+        await enqueueStockRelease(tx, orderId);
+        return { release: true, commit: false };
+      }
+      return { release: false, commit: false };
+    }
+    return {
+      release: order.status === 'CANCELLED',
+      commit: ['PAID', 'SHIPPED', 'COMPLETED'].includes(order.status),
+    };
+  });
+export const cancelForStockFailure = (orderId: string) =>
+  prisma.$transaction(async (tx) => {
+    const { count } = await tx.order.updateMany({
+      where: { id: orderId, status: { in: ['PENDING', 'CONFIRMED'] } },
+      data: { status: 'CANCELLED' },
+    });
+    if (count) await enqueueStockRelease(tx, orderId);
+  });

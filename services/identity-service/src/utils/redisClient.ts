@@ -1,5 +1,5 @@
 import type Redis from 'ioredis';
-import { createRedisClient } from '@ecommerce/common';
+import { createRedisClient } from '@ecommerce/cache-kit';
 import config from '../config';
 
 let redis: Redis | null = null;

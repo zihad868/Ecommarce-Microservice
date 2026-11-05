@@ -1,11 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 namespace: ecommerce-dev
-
 resources:
   - ../../base
-
+  - 02-redis.yaml
+  - 03-kafka.yaml
+  - 04-databases.yaml
 patches:
   - target:
       kind: Deployment
@@ -28,3 +28,12 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 1
+images:
+  - name: identity-service
+    newTag: dev
+  - name: catalog-service
+    newTag: dev
+  - name: order-service
+    newTag: dev
+  - name: api-gateway
+    newTag: dev

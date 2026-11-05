@@ -23,6 +23,13 @@ afterEach(async () => {
 
 function backend(): GatewayBackend {
   return {
+    logout: vi.fn(),
+    me: vi.fn(),
+    createOrder: vi.fn(),
+    payOrder: vi.fn(),
+    updateOrder: vi.fn(),
+    products: vi.fn(),
+    mutateProduct: vi.fn(),
     validateToken: vi
       .fn()
       .mockResolvedValue({ valid: true, userId: 'alice', role: 'USER', error: '' }),
@@ -53,6 +60,73 @@ async function listen(client: GatewayBackend): Promise<string> {
 }
 
 describe('gateway HTTP boundary', () => {
+  it('forwards order creation and the idempotency key with verified identity metadata', async () => {
+    const client = backend();
+    vi.mocked(client.createOrder).mockResolvedValue({
+      success: true,
+      id: 'new',
+      userId: 'alice',
+      totalAmount: 10,
+      status: 'PENDING',
+      error: '',
+    });
+    const url = await listen(client);
+    const response = await fetch(`${url}/api/orders`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer token',
+        'content-type': 'application/json',
+        'idempotency-key': 'retry-1',
+        'x-user-id': 'bob',
+        'x-user-role': 'ADMIN',
+      },
+      body: JSON.stringify({ items: [{ productId: 'stock', quantity: 1 }] }),
+    });
+    expect(response.status).toBe(201);
+    const call = vi.mocked(client.createOrder).mock.calls[0];
+    expect(call[1]).toBe('retry-1');
+    expect(call[2].get('x-user-id')).toEqual(['alice']);
+    expect(call[2].get('x-user-role')).toEqual(['USER']);
+  });
+  it('preserves the idempotency mismatch status and message', async () => {
+    const client = backend();
+    vi.mocked(client.createOrder).mockRejectedValue({
+      code: status.FAILED_PRECONDITION,
+      details: 'Idempotency key reused with a different request',
+    });
+    const url = await listen(client);
+    const response = await fetch(`${url}/api/orders`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer token', 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [{ productId: 'stock', quantity: 1 }] }),
+    });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      success: false,
+      error: 'Idempotency key reused with a different request',
+    });
+  });
+  it('routes browsing and payment through their RPC adapters', async () => {
+    const client = backend();
+    vi.mocked(client.products).mockResolvedValue({ products: [], metaJson: '{"total":0}' });
+    vi.mocked(client.payOrder).mockResolvedValue({
+      success: true,
+      id: 'order-1',
+      userId: 'alice',
+      totalAmount: 10,
+      status: 'PAID',
+      error: '',
+    });
+    const url = await listen(client);
+    expect((await fetch(`${url}/api/products?limit=5`)).status).toBe(200);
+    expect(client.products).toHaveBeenCalledWith('{"limit":"5"}', expect.any(Metadata));
+    const paid = await fetch(`${url}/api/orders/order-1/pay`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer token' },
+    });
+    expect(paid.status).toBe(200);
+    expect(client.payOrder).toHaveBeenCalledWith('order-1', 'MOCK', expect.any(Metadata));
+  });
   it('rejects order reads without authentication before contacting order service', async () => {
     const client = backend();
     const url = await listen(client);
@@ -116,6 +190,8 @@ describe('generated gRPC client integration', () => {
   it('loads versioned contracts and carries credentials and metadata over a real gRPC connection', async () => {
     let correlation: unknown;
     const handlers: AuthServiceHandlers = {
+      Logout: (_call, callback) => callback(null, {}),
+      GetUser: (_call, callback) => callback({ code: status.UNIMPLEMENTED }),
       Login: (call, callback) => {
         correlation = call.metadata.get('x-correlation-id');
         callback(null, {

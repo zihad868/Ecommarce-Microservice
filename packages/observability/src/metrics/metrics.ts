@@ -7,6 +7,7 @@ export interface MetricsRegistryBundle {
   httpRequestDuration: Histogram;
   grpcRequestCounter: Counter;
   grpcRequestDuration: Histogram;
+  outboxRows: client.Gauge;
 }
 
 let metricsBundle: MetricsRegistryBundle | null = null;
@@ -52,6 +53,12 @@ export const initMetrics = (serviceName: string): MetricsRegistryBundle => {
   });
 
   metricsBundle = {
+    outboxRows: new client.Gauge({
+      name: 'outbox_rows',
+      help: 'Outbox rows by status',
+      labelNames: ['status'],
+      registers: [register],
+    }),
     register,
     httpRequestCounter,
     httpRequestDuration,

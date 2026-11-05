@@ -1,11 +1,3 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# AUTH SERVICE
-# - min 2 pods, max 8 pods (HPA CPU/Memory-based scaling)
-# - Zero downtime Rolling Update
-# - SecurityContext: non-root user
-# - DB Migration: আলাদা Job-এ (12-db-migration-job.yaml)
-# ─────────────────────────────────────────────────────────────────────────────
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,15 +8,15 @@ metadata:
     tier: service
     version: '1.0'
 spec:
-  replicas: 2 # HPA এর সাথে কাজ করবে (initial 2 pods)
+  replicas: 2
   selector:
     matchLabels:
       app: identity-service
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1 # একসাথে 1 নতুন pod আসতে পারবে
-      maxUnavailable: 0 # zero downtime — সবসময় সব pods ready থাকবে
+      maxSurge: 1
+      maxUnavailable: 0
   template:
     metadata:
       labels:
@@ -32,12 +24,10 @@ spec:
         tier: service
         version: '1.0'
       annotations:
-        # Prometheus metrics scraping
         prometheus.io/scrape: 'true'
         prometheus.io/port: '3001'
-        prometheus.io/path: '/metrics'
+        prometheus.io/path: /metrics
     spec:
-      # ── Pod anti-affinity: দুটো pod কখনো একই node-এ যাবে না ──────────────
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -50,84 +40,57 @@ spec:
                       values:
                         - identity-service
                 topologyKey: kubernetes.io/hostname
-
-      # ── Pod-level Security Context ─────────────────────────────────────────
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1001 # Node.js app non-root user
+        runAsUser: 1001
         runAsGroup: 1001
         fsGroup: 1001
-
-      # ── Service Account ────────────────────────────────────────────────────
-      # Specific service account ব্যবহার করুন (least privilege)
       automountServiceAccountToken: false
-
       containers:
         - name: identity-service
-          image: identity-service:1.0.0
-          # Production-এ: Always (যাতে latest image সবসময় pull হয়)
-          # Local dev-এ: IfNotPresent
-          imagePullPolicy: Always
-
+          image: identity-service:dev
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3001
-              name: http
+              name: operations
               protocol: TCP
             - containerPort: 50051
               name: grpc
               protocol: TCP
-
-          # ── Environment Variables ──────────────────────────────────────────
           env:
             - name: PORT
               value: '3001'
             - name: GRPC_PORT
               value: '50051'
             - name: NODE_ENV
-              value: 'production'
-
-          # Secrets থেকে sensitive config
+              value: production
           envFrom:
             - secretRef:
                 name: identity-service-secret
-            # Non-sensitive config (optional — directly env-এ দেওয়া আছে)
-            # - configMapRef:
-            #     name: app-config
-
-          # ── Resource Requests & Limits ─────────────────────────────────────
           resources:
             requests:
-              memory: '256Mi'
-              cpu: '200m' # HPA এই CPU দেখে scale করবে
+              memory: 256Mi
+              cpu: 200m
             limits:
-              memory: '512Mi'
-              cpu: '500m'
-
-          # ── Health Probes ──────────────────────────────────────────────────
-
-          # startupProbe: app শুরু হওয়ার সময় চলে
-          # এটা pass করার আগে liveness/readiness check হয় না
+              memory: 512Mi
+              cpu: 500m
           startupProbe:
             httpGet:
               path: /health/live
               port: 3001
             initialDelaySeconds: 10
             periodSeconds: 5
-            failureThreshold: 15 # 75s startup window (Prisma migration সহ)
+            failureThreshold: 15
             successThreshold: 1
-
-          # livenessProbe: app জীবিত আছে কিনা — fail হলে restart হবে
           livenessProbe:
             httpGet:
               path: /health/live
               port: 3001
-            initialDelaySeconds: 0 # startupProbe এর পরে শুরু হয়
+            initialDelaySeconds: 0
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
             successThreshold: 1
-
-          # readinessProbe: traffic পাঠানো হবে কিনা — fail হলে Service এর endpoint থেকে বাদ
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -137,34 +100,24 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
             successThreshold: 1
-
-          # ── Container Security ─────────────────────────────────────────────
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-
-          # ── Volume Mounts (readOnlyRootFilesystem-এর জন্য writable tmp) ───
           volumeMounts:
             - name: tmp
               mountPath: /tmp
             - name: app-tmp
               mountPath: /app/tmp
-
       volumes:
         - name: tmp
           emptyDir: {}
         - name: app-tmp
           emptyDir: {}
-
-      # ── Graceful termination ─────────────────────────────────────────────
-      # চলমান requests শেষ হওয়ার সুযোগ দেবে
       terminationGracePeriodSeconds: 30
-
 ---
-# ── Auth Service — ClusterIP Service ─────────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
@@ -177,19 +130,12 @@ spec:
   selector:
     app: identity-service
   ports:
-    - name: http
-      port: 3001
-      targetPort: 3001
-      protocol: TCP
     - name: grpc
       port: 50051
       targetPort: 50051
       protocol: TCP
   type: ClusterIP
-
 ---
-# ── HPA: Horizontal Pod Autoscaler ───────────────────────────────────────────
-# CPU > 70% বা Memory > 80% হলে scale up
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -200,45 +146,42 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: identity-service
-  minReplicas: 2 # সবসময় minimum 2 pods (high availability)
-  maxReplicas: 8 # maximum 8 pods পর্যন্ত scale
+  minReplicas: 2
+  maxReplicas: 8
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 70 # CPU 70% হলে scale up শুরু
+          averageUtilization: 70
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
-          averageUtilization: 80 # Memory 80% হলে scale up
+          averageUtilization: 80
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 60 # 60s দেখার পরে scale up
+      stabilizationWindowSeconds: 60
       policies:
         - type: Pods
-          value: 2 # একবারে max 2 pod বাড়াবে
+          value: 2
           periodSeconds: 60
     scaleDown:
-      stabilizationWindowSeconds: 300 # 5 মিনিট stable থাকলে scale down
+      stabilizationWindowSeconds: 300
       policies:
         - type: Pods
-          value: 1 # একবারে max 1 pod কমাবে
+          value: 1
           periodSeconds: 120
-
 ---
-# ── PodDisruptionBudget ───────────────────────────────────────────────────────
-# Rolling update বা node drain-এর সময় minimum 1 pod সচল থাকবে
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: identity-service-pdb
   namespace: ecommerce
 spec:
-  minAvailable: 1 # 2 pods-এর মধ্যে min 1 সবসময় সচল
+  minAvailable: 1
   selector:
     matchLabels:
       app: identity-service

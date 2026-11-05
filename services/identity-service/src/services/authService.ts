@@ -2,9 +2,9 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import * as argon2 from 'argon2';
 import httpStatus from 'http-status';
-import { ApiError } from '@ecommerce/common';
+import { ApiError } from '@ecommerce/errors';
 import config from '../config';
-import prisma, { Role } from '../utils/prismaClient';
+import prisma, { Role, type Prisma } from '../utils/prismaClient';
 import { getRedisClient } from '../utils/redisClient';
 import type { RegisterInput } from '../validators/authValidators';
 
@@ -25,17 +25,26 @@ export interface JwtTokenPayload {
   id: string;
   email: string;
   role: string;
+  issuedAt: number;
 }
 
 const hashToken = (token: string): string => {
   return crypto.createHash('sha256').update(token).digest('hex');
 };
 
-const generateTokens = async (userId: string, email: string, role: Role): Promise<AuthTokens> => {
-  const payload: JwtTokenPayload = { id: userId, email, role };
-
-  const accessToken = jwt.sign(payload, config.JWT_SECRET, {
-    expiresIn: config.JWT_ACCESS_EXPIRES_IN as jwt.SignOptions['expiresIn'],
+const generateTokens = async (
+  userId: string,
+  email: string,
+  role: Role,
+  db: Prisma.TransactionClient = prisma,
+): Promise<AuthTokens> => {
+  const payload = { id: userId, email, role, issuedAt: Date.now() };
+  const accessToken = jwt.sign(payload, config.JWT_PRIVATE_KEY.replace(/\\n/g, '\n'), {
+    algorithm: 'RS256',
+    issuer: 'ecommerce-identity',
+    audience: 'ecommerce-gateway',
+    jwtid: crypto.randomUUID(),
+    expiresIn: '15m',
   });
 
   const rawRefreshToken = crypto.randomBytes(40).toString('hex');
@@ -44,7 +53,7 @@ const generateTokens = async (userId: string, email: string, role: Role): Promis
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
 
-  await prisma.refreshToken.create({
+  await db.refreshToken.create({
     data: {
       userId,
       hashedToken: hashedRefreshToken,
@@ -82,7 +91,9 @@ export const registerUser = async (input: RegisterInput) => {
     email: user.email,
     role: user.role,
   };
-  await redis.setex(`user:${user.id}`, USER_CACHE_TTL, JSON.stringify(cachedUser));
+  await redis
+    .setex(`user:${user.id}`, USER_CACHE_TTL, JSON.stringify(cachedUser))
+    .catch(() => undefined);
 
   return {
     user: { id: user.id, email: user.email, role: user.role },
@@ -112,7 +123,9 @@ export const loginUser = async (emailInput: string, passwordInput: string) => {
     email: user.email,
     role: user.role,
   };
-  await redis.setex(`user:${user.id}`, USER_CACHE_TTL, JSON.stringify(cachedUser));
+  await redis
+    .setex(`user:${user.id}`, USER_CACHE_TTL, JSON.stringify(cachedUser))
+    .catch(() => undefined);
 
   return {
     user: { id: user.id, email: user.email, role: user.role },
@@ -120,67 +133,65 @@ export const loginUser = async (emailInput: string, passwordInput: string) => {
   };
 };
 
-export const refreshTokens = async (rawRefreshToken: string): Promise<AuthTokens> => {
-  const hashed = hashToken(rawRefreshToken);
-
-  const tokenRecord = await prisma.refreshToken.findUnique({
-    where: { hashedToken: hashed },
-    include: { user: true },
-  });
-
-  if (!tokenRecord) {
-    throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid refresh token');
+export const revokeUserAccess = async (userId: string): Promise<void> => {
+  try {
+    await getRedisClient().setex(`auth:revoked-before:${userId}`, 900, String(Date.now()));
+  } catch {
+    /* Bounded fail-open degradation: access tokens still expire after 15 minutes. */
   }
-
-  // Reuse Detection: If already revoked, invalidate ALL sessions for this user
-  if (tokenRecord.revoked) {
-    await prisma.refreshToken.updateMany({
-      where: { userId: tokenRecord.userId },
+};
+export const refreshTokens = async (rawRefreshToken: string): Promise<AuthTokens> => {
+  const hashedToken = hashToken(rawRefreshToken);
+  const result = await prisma.$transaction(async (tx) => {
+    const initial = await tx.refreshToken.findUnique({ where: { hashedToken } });
+    if (!initial) throw new ApiError(401, 'Invalid refresh token');
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${initial.userId}, 2))`;
+    const record = await tx.refreshToken.findUniqueOrThrow({
+      where: { hashedToken },
+      include: { user: true },
+    });
+    if (record.revoked) {
+      await tx.refreshToken.updateMany({
+        where: { userId: record.userId },
+        data: { revoked: true },
+      });
+      return { reusedUserId: record.userId };
+    }
+    if (record.expiresAt <= new Date()) throw new ApiError(401, 'Refresh token has expired');
+    const { count } = await tx.refreshToken.updateMany({
+      where: { id: record.id, revoked: false },
       data: { revoked: true },
     });
-    const redis = getRedisClient();
-    await redis.del(`user:${tokenRecord.userId}`);
-    throw new ApiError(
-      httpStatus.UNAUTHORIZED,
-      'Refresh token reuse detected. All sessions revoked.',
-    );
-  }
-
-  if (new Date() > tokenRecord.expiresAt) {
-    throw new ApiError(httpStatus.UNAUTHORIZED, 'Refresh token has expired');
-  }
-
-  // Rotate: revoke the old token and issue a new pair
-  await prisma.refreshToken.update({
-    where: { id: tokenRecord.id },
-    data: { revoked: true },
+    if (!count) throw new ApiError(401, 'Refresh token already used');
+    return {
+      tokens: await generateTokens(record.user.id, record.user.email, record.user.role, tx),
+    };
   });
-
-  return generateTokens(tokenRecord.user.id, tokenRecord.user.email, tokenRecord.user.role);
+  if (result.reusedUserId) {
+    await revokeUserAccess(result.reusedUserId);
+    throw new ApiError(401, 'Refresh token reuse detected. All sessions revoked.');
+  }
+  if (!result.tokens) throw new ApiError(401, 'Invalid refresh token');
+  return result.tokens;
 };
 
-export const logoutUser = async (rawRefreshToken?: string, userId?: string) => {
-  if (rawRefreshToken) {
-    const hashed = hashToken(rawRefreshToken);
-    await prisma.refreshToken
-      .update({
-        where: { hashedToken: hashed },
-        data: { revoked: true },
-      })
-      .catch(() => undefined);
-  }
-
-  if (userId) {
-    const redis = getRedisClient();
-    await redis.del(`user:${userId}`);
-  }
+export const logoutUser = async (_rawRefreshToken?: string, userId?: string) => {
+  if (!userId) throw new ApiError(401, 'Authenticated user required');
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 2))`;
+    await tx.refreshToken.updateMany({ where: { userId }, data: { revoked: true } });
+  });
+  await revokeUserAccess(userId);
+  await getRedisClient()
+    .del(`user:${userId}`)
+    .catch(() => undefined);
 };
 
 export const getUserById = async (id: string) => {
   const redis = getRedisClient();
   const cacheKey = `user:${id}`;
 
-  const cached = await redis.get(cacheKey);
+  const cached = await redis.get(cacheKey).catch(() => null);
   if (cached) {
     return JSON.parse(cached) as CachedUser;
   }
@@ -191,7 +202,9 @@ export const getUserById = async (id: string) => {
   }
 
   const { password: _password, ...userWithoutPassword } = user;
-  await redis.setex(cacheKey, USER_CACHE_TTL, JSON.stringify(userWithoutPassword));
+  await redis
+    .setex(cacheKey, USER_CACHE_TTL, JSON.stringify(userWithoutPassword))
+    .catch(() => undefined);
 
   return userWithoutPassword;
 };
@@ -199,7 +212,11 @@ export const getUserById = async (id: string) => {
 export const validateToken = async (token: string) => {
   let decoded: JwtTokenPayload;
   try {
-    decoded = jwt.verify(token, config.JWT_SECRET) as JwtTokenPayload;
+    decoded = jwt.verify(token, config.JWT_PUBLIC_KEY.replace(/\\n/g, '\n'), {
+      algorithms: ['RS256'],
+      issuer: 'ecommerce-identity',
+      audience: 'ecommerce-gateway',
+    }) as JwtTokenPayload;
   } catch {
     return { valid: false, userId: '', role: '', error: 'Invalid token' };
   }
@@ -208,8 +225,11 @@ export const validateToken = async (token: string) => {
   const redis = getRedisClient();
   const cacheKey = `user:${userId}`;
 
+  const cutoff = await redis.get(`auth:revoked-before:${userId}`).catch(() => null);
+  if (cutoff && decoded.issuedAt <= Number(cutoff))
+    return { valid: false, userId: '', role: '', error: 'Token revoked' };
   // Check Redis cache first
-  const cachedUserStr = await redis.get(cacheKey);
+  const cachedUserStr = await redis.get(cacheKey).catch(() => null);
   if (cachedUserStr) {
     const cachedUser = JSON.parse(cachedUserStr) as CachedUser;
     return {
@@ -231,7 +251,16 @@ export const validateToken = async (token: string) => {
     email: user.email,
     role: user.role,
   };
-  await redis.setex(cacheKey, USER_CACHE_TTL, JSON.stringify(toCache));
+  await redis.setex(cacheKey, USER_CACHE_TTL, JSON.stringify(toCache)).catch(() => undefined);
 
   return { valid: true, userId: user.id, role: user.role, error: '' };
+};
+
+export const changeUserRole = async (userId: string, role: Role) => {
+  const user = await prisma.user.update({ where: { id: userId }, data: { role } });
+  await revokeUserAccess(userId);
+  await getRedisClient()
+    .del(`user:${userId}`)
+    .catch(() => undefined);
+  return user;
 };

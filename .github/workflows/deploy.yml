@@ -1,0 +1,90 @@
+name: Deploy
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [dev, staging, prod]
+        required: true
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+jobs:
+  deploy:
+    # The EKS API is private; use a runner with access to its VPC.
+    runs-on: [self-hosted, linux, eks]
+    environment: ${{ inputs.environment }}
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      EKS_CLUSTER: ${{ vars.EKS_CLUSTER }}
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      GATEWAY_URL: ${{ vars.GATEWAY_URL }}
+      NAMESPACE: ecommerce-${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run check
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push immutable images
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in identity-service catalog-service order-service api-gateway; do
+            image="$ECR_REGISTRY/$service:$GITHUB_SHA"
+            docker build -f platform/docker/Dockerfile --build-arg "WORKSPACE=$service" -t "$image" .
+            docker push "$image"
+          done
+      - name: Configure cluster and images
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+          cd "platform/k8s/overlays/$ENVIRONMENT"
+          for service in identity-service catalog-service order-service api-gateway; do
+            kustomize edit set image "$service=$ECR_REGISTRY/$service:$GITHUB_SHA"
+          done
+          kubectl kustomize . > "$RUNNER_TEMP/release.yaml"
+      - name: Prepare namespace, secrets, networking, and dev data stores
+        shell: bash
+        run: |
+          set -euo pipefail
+          # yq v4, kubectl and kustomize are runner prerequisites.
+          yq 'select(.kind == "Namespace")' "$RUNNER_TEMP/release.yaml" | kubectl apply -f -
+          yq 'select(.kind == "ExternalSecret" or .kind == "NetworkPolicy" or .kind == "ConfigMap" or (.kind == "Service" and .metadata.labels.tier == "database") or .kind == "StatefulSet")' "$RUNNER_TEMP/release.yaml" | kubectl apply -f -
+          if [ "$ENVIRONMENT" != dev ]; then
+            kubectl -n "$NAMESPACE" wait --for=condition=Ready externalsecret --all --timeout=180s
+          fi
+          for service in identity-service catalog-service order-service api-gateway; do
+            kubectl -n "$NAMESPACE" get secret "$service-secret" > /dev/null
+          done
+      - name: Migrate using direct database connections
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in identity-service catalog-service order-service; do
+            job="migrate-$service-${GITHUB_SHA:0:12}-$GITHUB_RUN_ATTEMPT"
+            kubectl -n "$NAMESPACE" create job "$job" --image="$ECR_REGISTRY/$service:$GITHUB_SHA" --dry-run=client -o yaml -- node /app/node_modules/prisma/build/index.js migrate deploy --schema "/app/services/$service/prisma/schema.prisma" |
+              SERVICE="$service" yq '.spec.template.metadata.labels."job-type" = "db-migration" | .spec.template.spec.containers[0].envFrom = [{"secretRef":{"name":strenv(SERVICE) + "-secret"}}] | .spec.template.spec.containers[0].env = [{"name":"DATABASE_URL","valueFrom":{"secretKeyRef":{"name":strenv(SERVICE) + "-secret","key":"DIRECT_DATABASE_URL"}}}] | .spec.activeDeadlineSeconds = 300 | .spec.ttlSecondsAfterFinished = 86400' |
+              kubectl apply -f -
+            kubectl -n "$NAMESPACE" wait --for=condition=complete "job/$job" --timeout=300s
+          done
+      - name: Roll out and smoke test through gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl apply -f "$RUNNER_TEMP/release.yaml"
+          for service in identity-service catalog-service order-service api-gateway; do
+            kubectl -n "$NAMESPACE" rollout status "deployment/$service" --timeout=300s
+          done
+          curl --fail --retry 5 --retry-delay 3 "$GATEWAY_URL/api/products?limit=1"

@@ -7,7 +7,10 @@ service AuthService {
   rpc Register (CredentialsRequest) returns (SessionResponse) {}
   rpc Login (CredentialsRequest) returns (SessionResponse) {}
   rpc Refresh (RefreshRequest) returns (TokensResponse) {}
+  rpc Logout (RefreshRequest) returns (LogoutResponse) {}
+  rpc GetUser (TokenRequest) returns (User) {}
 }
+message LogoutResponse {}
 
 message CredentialsRequest {
   string email = 1;

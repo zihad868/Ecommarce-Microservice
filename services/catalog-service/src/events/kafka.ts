@@ -3,13 +3,14 @@ import {
   ORDER_CREATED_DLQ_TOPIC,
   ORDER_CREATED_TOPIC,
   decodeOrderCreated,
-  createLogger,
-} from '@ecommerce/common';
+} from '@ecommerce/messaging-kit';
+import { createLogger } from '@ecommerce/observability';
 import { createKafka } from '@ecommerce/messaging-kit';
 import type { OrderCreatedEvent } from '@ecommerce/messaging-kit';
 import config from '../config';
 import prisma from '../utils/prismaClient';
 import * as productService from '../services/productService';
+import { releaseStock } from '../services/stockService';
 
 const logger = createLogger({ serviceName: 'catalog-service' });
 
@@ -17,13 +18,28 @@ const kafka = createKafka(config.KAFKA_CLIENT_ID, config.KAFKA_BROKER.split(',')
 
 let consumer: Consumer | null = null;
 let dlqProducer: Producer | null = null;
+let producerConnection: Promise<Producer> | undefined;
+let stopping = false;
+let retryTimer: NodeJS.Timeout | undefined;
+export const getKafkaProducer = () => dlqProducer;
+export const publishEvent = async (topic: string, key: string, data: unknown): Promise<void> => {
+  const producer = await getDlqProducer();
+  await producer.send({ topic, messages: [{ key, value: JSON.stringify(data) }] });
+};
 
 const getDlqProducer = async (): Promise<Producer> => {
-  if (!dlqProducer) {
-    dlqProducer = kafka.producer();
-    await dlqProducer.connect();
+  if (dlqProducer) return dlqProducer;
+  producerConnection ??= (async () => {
+    const connected = kafka.producer({ idempotent: true });
+    await connected.connect();
+    dlqProducer = connected;
+    return connected;
+  })();
+  try {
+    return await producerConnection;
+  } finally {
+    producerConnection = undefined;
   }
-  return dlqProducer;
 };
 
 const sendToDlq = async (
@@ -78,11 +94,12 @@ const withRetry = async <T>(
 
 export const connectKafkaConsumer = async (): Promise<void> => {
   try {
+    await getDlqProducer();
     consumer = kafka.consumer({ groupId: config.KAFKA_GROUP_ID });
     await consumer.connect();
 
     await consumer.subscribe({
-      topic: ORDER_CREATED_TOPIC,
+      topics: [ORDER_CREATED_TOPIC, 'StockReleaseRequested'],
       fromBeginning: true,
     });
 
@@ -91,6 +108,12 @@ export const connectKafkaConsumer = async (): Promise<void> => {
     await consumer.run({
       eachMessage: async ({ topic, partition, message }: EachMessagePayload) => {
         const bytes = message.value;
+        if (topic === 'StockReleaseRequested') {
+          const request = JSON.parse(bytes?.toString() ?? '{}') as { orderId?: string };
+          if (!request.orderId) throw new Error('Missing order ID');
+          await releaseStock(request.orderId);
+          return;
+        }
         const raw = bytes?.toString('base64');
         if (!raw || !bytes) return;
 
@@ -112,6 +135,7 @@ export const connectKafkaConsumer = async (): Promise<void> => {
             async () => {
               // Single DB transaction: idempotency check + all stock decrements + processedEvent
               await prisma.$transaction(async (tx) => {
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${event.orderId}, 1))`;
                 // 2a. Idempotency Check — inside transaction so concurrent deliveries are safe
                 const alreadyProcessed = await tx.processedEvent.findUnique({
                   where: { eventId: event.eventId },
@@ -126,8 +150,17 @@ export const connectKafkaConsumer = async (): Promise<void> => {
                 }
 
                 // 2b. Atomic stock decrements for every item — all-or-nothing
-                for (const item of event.items) {
-                  await productService.decrementProductStockTx(tx, item.productId, item.quantity);
+                const reservation = await tx.stockReservation.findUnique({
+                  where: { orderId: event.orderId },
+                });
+                if (!reservation || reservation.status === 'RELEASED') {
+                  await tx.outboxEvent.create({
+                    data: {
+                      aggregateId: event.orderId,
+                      eventType: 'StockReservationFailed',
+                      payload: { eventId: event.eventId, orderId: event.orderId },
+                    },
+                  });
                 }
 
                 // 2c. Mark event processed — inside the same transaction
@@ -138,6 +171,9 @@ export const connectKafkaConsumer = async (): Promise<void> => {
                   },
                 });
               });
+              await Promise.all(
+                event.items.map((item) => productService.invalidateProductCache(item.productId)),
+              );
             },
             3, // max 3 attempts
             200, // base delay 200 ms → 200, 400, 800 ms
@@ -157,13 +193,17 @@ export const connectKafkaConsumer = async (): Promise<void> => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error({ msg }, 'Kafka Consumer connection failed, retrying in 5s...');
-    setTimeout(() => {
-      void connectKafkaConsumer();
-    }, 5000);
+    await consumer?.disconnect().catch(() => undefined);
+    if (!stopping)
+      retryTimer = setTimeout(() => {
+        void connectKafkaConsumer();
+      }, 5000);
   }
 };
 
 export const disconnectKafkaConsumer = async (): Promise<void> => {
+  stopping = true;
+  if (retryTimer) clearTimeout(retryTimer);
   if (consumer) {
     await consumer.disconnect();
     logger.info('Product Service Kafka Consumer disconnected');
@@ -172,4 +212,5 @@ export const disconnectKafkaConsumer = async (): Promise<void> => {
     await dlqProducer.disconnect();
     logger.info('Product Service DLQ Producer disconnected');
   }
+  dlqProducer = null;
 };

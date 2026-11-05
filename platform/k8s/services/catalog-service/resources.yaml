@@ -1,10 +1,3 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# PRODUCT SERVICE
-# - min 3 pods, max 10 pods (HPA CPU/Memory-based scaling)
-# - Product service সবচেয়ে বেশি traffic পায় → বেশি replicas
-# - SecurityContext: non-root user
-# ─────────────────────────────────────────────────────────────────────────────
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,15 +8,15 @@ metadata:
     tier: service
     version: '1.0'
 spec:
-  replicas: 3 # initial 3 pods
+  replicas: 3
   selector:
     matchLabels:
       app: catalog-service
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 2 # scale up এর সময় 2 নতুন pod একসাথে
-      maxUnavailable: 0 # zero downtime
+      maxSurge: 2
+      maxUnavailable: 0
   template:
     metadata:
       labels:
@@ -33,9 +26,8 @@ spec:
       annotations:
         prometheus.io/scrape: 'true'
         prometheus.io/port: '3002'
-        prometheus.io/path: '/metrics'
+        prometheus.io/path: /metrics
     spec:
-      # ── Pod Anti-Affinity: pods আলাদা nodes-এ spread করবে ───────────────
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -48,60 +40,50 @@ spec:
                       values:
                         - catalog-service
                 topologyKey: kubernetes.io/hostname
-
-      # ── Pod-level Security Context ─────────────────────────────────────────
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
         fsGroup: 1001
-
       automountServiceAccountToken: false
-
       containers:
         - name: catalog-service
-          image: catalog-service:1.0.0
-          imagePullPolicy: Always
-
+          image: catalog-service:dev
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3002
-              name: http
+              name: operations
               protocol: TCP
             - containerPort: 50052
               name: grpc
               protocol: TCP
-
           env:
             - name: PORT
               value: '3002'
             - name: GRPC_PORT
               value: '50052'
             - name: NODE_ENV
-              value: 'production'
-
+              value: production
+            - name: ORDER_GRPC_URL
+              value: order-service:50053
           envFrom:
             - secretRef:
                 name: catalog-service-secret
-
-          # ── Resource Requests & Limits ─────────────────────────────────────
           resources:
             requests:
-              memory: '256Mi'
-              cpu: '250m'
+              memory: 256Mi
+              cpu: 250m
             limits:
-              memory: '512Mi'
-              cpu: '600m'
-
-          # ── Health Probes ──────────────────────────────────────────────────
+              memory: 512Mi
+              cpu: 600m
           startupProbe:
             httpGet:
               path: /health/live
               port: 3002
             initialDelaySeconds: 10
             periodSeconds: 5
-            failureThreshold: 15 # 75s startup window
+            failureThreshold: 15
             successThreshold: 1
-
           livenessProbe:
             httpGet:
               path: /health/live
@@ -111,7 +93,6 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
             successThreshold: 1
-
           readinessProbe:
             httpGet:
               path: /health/ready
@@ -121,31 +102,24 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
             successThreshold: 1
-
-          # ── Container Security ─────────────────────────────────────────────
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-
           volumeMounts:
             - name: tmp
               mountPath: /tmp
             - name: app-tmp
               mountPath: /app/tmp
-
       volumes:
         - name: tmp
           emptyDir: {}
         - name: app-tmp
           emptyDir: {}
-
       terminationGracePeriodSeconds: 30
-
 ---
-# ── Product Service — ClusterIP Service ──────────────────────────────────────
 apiVersion: v1
 kind: Service
 metadata:
@@ -158,18 +132,12 @@ spec:
   selector:
     app: catalog-service
   ports:
-    - name: http
-      port: 3002
-      targetPort: 3002
-      protocol: TCP
     - name: grpc
       port: 50052
       targetPort: 50052
       protocol: TCP
   type: ClusterIP
-
 ---
-# ── HPA: min=3, max=10 ───────────────────────────────────────────────────────
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -180,8 +148,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: catalog-service
-  minReplicas: 3 # সবসময় minimum 3 pods
-  maxReplicas: 10 # maximum 10 pods
+  minReplicas: 3
+  maxReplicas: 10
   metrics:
     - type: Resource
       resource:
@@ -200,7 +168,7 @@ spec:
       stabilizationWindowSeconds: 60
       policies:
         - type: Pods
-          value: 3 # একবারে max 3 pod বাড়াবে (faster scale)
+          value: 3
           periodSeconds: 60
     scaleDown:
       stabilizationWindowSeconds: 300
@@ -208,16 +176,14 @@ spec:
         - type: Pods
           value: 1
           periodSeconds: 120
-
 ---
-# ── PodDisruptionBudget: min 2 pods সবসময় সচল ──────────────────────────────
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: catalog-service-pdb
   namespace: ecommerce
 spec:
-  minAvailable: 2 # 3 pods এর মধ্যে min 2 সচল থাকবে
+  minAvailable: 2
   selector:
     matchLabels:
       app: catalog-service

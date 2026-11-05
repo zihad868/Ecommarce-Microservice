@@ -1,5 +1,6 @@
+import { createLogger } from '@ecommerce/observability';
 import httpStatus from 'http-status';
-import { ApiError } from '@ecommerce/common';
+import { ApiError } from '@ecommerce/errors';
 import prisma, { Prisma, type Product } from '../utils/prismaClient';
 import { getRedisClient } from '../utils/redisClient';
 import type {
@@ -8,6 +9,7 @@ import type {
   UpdateProductInput,
 } from '../validators/productValidators';
 
+const logger = createLogger({ serviceName: 'catalog-service' });
 const PRODUCT_CACHE_TTL = 600; // 10 minutes
 const LIST_CACHE_TTL = 60; // 1 minute
 
@@ -30,17 +32,17 @@ const invalidateListCache = async (): Promise<void> => {
     const redis = getRedisClient();
     await redis.incr('products:list:version');
   } catch (err) {
-    console.warn('[Cache] Failed to increment list cache version:', err);
+    logger.warn({ err }, '[Cache] Failed to increment list cache version:');
   }
 };
 
-const invalidateProductCache = async (productId: string): Promise<void> => {
+export const invalidateProductCache = async (productId: string): Promise<void> => {
   try {
     const redis = getRedisClient();
     await redis.del(`product:${productId}`);
     await invalidateListCache();
   } catch (err) {
-    console.warn('[Cache] Failed to invalidate product cache:', err);
+    logger.warn({ err }, '[Cache] Failed to invalidate product cache:');
   }
 };
 
@@ -78,7 +80,7 @@ export const getProducts = async (query: ListProductsQuery) => {
       };
     }
   } catch (err) {
-    console.warn('[Cache] Redis get error on getProducts:', err);
+    logger.warn({ err }, '[Cache] Redis get error on getProducts:');
   }
 
   const where: Prisma.ProductWhereInput = {};
@@ -132,7 +134,7 @@ export const getProducts = async (query: ListProductsQuery) => {
     const redis = getRedisClient();
     await redis.setex(cacheKey, LIST_CACHE_TTL, JSON.stringify(result));
   } catch (err) {
-    console.warn('[Cache] Redis set error on getProducts:', err);
+    logger.warn({ err }, '[Cache] Redis set error on getProducts:');
   }
 
   return result;
@@ -148,7 +150,7 @@ export const getProductById = async (id: string): Promise<Product | null> => {
       return JSON.parse(cached) as Product;
     }
   } catch (err) {
-    console.warn('[Cache] Redis get error on getProductById:', err);
+    logger.warn({ err }, '[Cache] Redis get error on getProductById:');
   }
 
   const product = await prisma.product.findUnique({ where: { id } });
@@ -158,7 +160,7 @@ export const getProductById = async (id: string): Promise<Product | null> => {
       const redis = getRedisClient();
       await redis.setex(cacheKey, PRODUCT_CACHE_TTL, JSON.stringify(product));
     } catch (err) {
-      console.warn('[Cache] Redis set error on getProductById:', err);
+      logger.warn({ err }, '[Cache] Redis set error on getProductById:');
     }
   }
 
@@ -242,3 +244,6 @@ export const decrementProductStock = async (productId: string, quantity: number)
   });
   await invalidateProductCache(productId);
 };
+
+export const getProductForOrder = (id: string): Promise<Product | null> =>
+  prisma.product.findUnique({ where: { id } });

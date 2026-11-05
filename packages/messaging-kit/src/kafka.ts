@@ -1,11 +1,30 @@
 import { Kafka } from 'kafkajs';
 import type { EachMessagePayload, Producer } from 'kafkajs';
+import { generateAuthToken } from 'aws-msk-iam-sasl-signer-js';
 
 export function createKafka(clientId: string, brokers: string[]): Kafka {
   if (!brokers.length || brokers.some((broker) => !broker.trim())) {
     throw new Error('At least one Kafka broker is required');
   }
-  return new Kafka({ clientId, brokers, retry: { retries: 5 } });
+  const useIam = process.env.KAFKA_MSK_IAM === 'true';
+  const region = process.env.AWS_REGION;
+  if (useIam && !region) throw new Error('AWS_REGION is required for MSK IAM');
+  return new Kafka({
+    clientId,
+    brokers,
+    retry: { retries: 5 },
+    ...(useIam
+      ? {
+          ssl: true,
+          sasl: {
+            mechanism: 'oauthbearer' as const,
+            oauthBearerProvider: async () => ({
+              value: (await generateAuthToken({ region: region ?? '' })).token,
+            }),
+          },
+        }
+      : {}),
+  });
 }
 
 /** Failure to publish the DLQ must reject so Kafka does not commit the original offset. */

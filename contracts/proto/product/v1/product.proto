@@ -3,6 +3,12 @@ syntax = "proto3";
 package product.v1;
 
 service ProductService {
+  rpc ReserveStock (ReserveStockRequest) returns (ReserveStockResponse) {}
+  rpc ReleaseStock (ReleaseStockRequest) returns (ReleaseStockResponse) {}
+  rpc ListProducts (ListProductsRequest) returns (ListProductsResponse) {}
+  rpc CreateProduct (ProductMutationRequest) returns (ProductResponse) {}
+  rpc UpdateProduct (ProductMutationRequest) returns (ProductResponse) {}
+  rpc DeleteProduct (ProductRequest) returns (ReleaseStockResponse) {}
   rpc GetProduct (ProductRequest) returns (ProductResponse) {}
 }
 
@@ -18,3 +24,12 @@ message ProductResponse {
   int32 stock = 5;
   string error = 6;
 }
+
+message StockItem { string productId = 1; uint32 quantity = 2; }
+message ReserveStockRequest { string orderId = 1; repeated StockItem items = 2; }
+message ReserveStockResponse { string reservationId = 1; }
+message ReleaseStockRequest { string orderId = 1; }
+message ReleaseStockResponse {}
+message ListProductsRequest { string queryJson = 1; }
+message ListProductsResponse { repeated ProductResponse products = 1; string metaJson = 2; }
+message ProductMutationRequest { string productId = 1; string dataJson = 2; }

@@ -3,6 +3,10 @@ syntax = "proto3";
 package order.v1;
 
 service OrderService {
+  rpc CreateOrder (CreateOrderRequest) returns (OrderResponse) {}
+  rpc PayOrder (PayOrderRequest) returns (OrderResponse) {}
+  rpc UpdateOrderStatus (UpdateOrderStatusRequest) returns (OrderResponse) {}
+  rpc ReconcileReservation (OrderRequest) returns (ReconcileReservationResponse) {}
   rpc GetOrder (OrderRequest) returns (OrderResponse) {}
   rpc GetOrdersByUser (UserOrdersRequest) returns (UserOrdersResponse) {}
 }
@@ -29,3 +33,9 @@ message UserOrdersResponse {
   repeated OrderResponse orders = 2;
   string error = 3;
 }
+
+message OrderItemInput { string productId = 1; uint32 quantity = 2; }
+message CreateOrderRequest { repeated OrderItemInput items = 1; string idempotencyKey = 2; }
+message PayOrderRequest { string orderId = 1; string paymentMethod = 2; }
+message UpdateOrderStatusRequest { string orderId = 1; string status = 2; }
+message ReconcileReservationResponse { bool release = 1; bool commit = 2; }

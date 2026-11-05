@@ -5,3 +5,5 @@ export * from './health/healthCheck';
 export * from './shutdown/gracefulShutdown';
 export * from './server';
 export * from './foundation';
+
+export * from './context';

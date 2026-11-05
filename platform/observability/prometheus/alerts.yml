@@ -8,3 +8,16 @@ groups:
           severity: critical
         annotations:
           summary: 'Ecommerce metrics target {{ $labels.instance }} is down'
+
+  - name: outbox
+    rules:
+      - alert: OutboxFailedEvents
+        expr: max by (service) (outbox_rows{status="FAILED"}) > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: 'Outbox events exhausted retries' }
+      - alert: OutboxPendingGrowing
+        expr: max by (service) (delta(outbox_rows{status="PENDING"}[15m])) > 100
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: 'Outbox backlog continues growing' }
