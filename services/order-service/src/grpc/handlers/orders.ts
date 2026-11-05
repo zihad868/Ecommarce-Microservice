@@ -25,8 +25,17 @@ export const orderHandlers: OrderServiceHandlers = {
     const user = userContext(call.metadata);
     if (request.userId !== user.userId && user.role !== 'ADMIN')
       throw new ApiError(403, 'Forbidden');
-    const result = await orders.getOrders(request.userId, 'USER', { page: 1, limit: 50 });
-    return { success: true, orders: result.orders.map(response), error: '' };
+    const limit = request.limit ? Number(request.limit) : 50;
+    const result = await orders.getOrders(request.userId, user.role, {
+      limit,
+      cursor: request.cursor || undefined,
+    });
+    return {
+      success: true,
+      orders: result.orders.map(response),
+      nextCursor: result.nextCursor ?? '',
+      error: '',
+    };
   }),
   CreateOrder: unary(async (request, call) => {
     const user = userContext(call.metadata);

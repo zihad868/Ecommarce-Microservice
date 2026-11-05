@@ -11,12 +11,16 @@ export const productClient = new productProto.product.v1.ProductService(
 );
 
 export interface ProductResponse {
-  success: boolean;
   id: string;
   name: string;
-  price: number;
+  price?: {
+    amount?: string;
+    amount_minor?: string | number;
+    currency?: string;
+  };
   stock: number;
-  error: string;
+  category?: string;
+  description?: string;
 }
 
 // Wrapper for gRPC product check with deadline, retries with jitter, and circuit breaker

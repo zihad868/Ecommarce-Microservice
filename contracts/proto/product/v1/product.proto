@@ -2,27 +2,34 @@ syntax = "proto3";
 
 package product.v1;
 
+import "common/v1/common.proto";
+
 service ProductService {
   rpc ReserveStock (ReserveStockRequest) returns (ReserveStockResponse) {}
   rpc ReleaseStock (ReleaseStockRequest) returns (ReleaseStockResponse) {}
   rpc ListProducts (ListProductsRequest) returns (ListProductsResponse) {}
-  rpc CreateProduct (ProductMutationRequest) returns (ProductResponse) {}
-  rpc UpdateProduct (ProductMutationRequest) returns (ProductResponse) {}
+  rpc CreateProduct (ProductMutationRequest) returns (Product) {}
+  rpc UpdateProduct (ProductMutationRequest) returns (Product) {}
   rpc DeleteProduct (ProductRequest) returns (ReleaseStockResponse) {}
-  rpc GetProduct (ProductRequest) returns (ProductResponse) {}
+  rpc GetProduct (ProductRequest) returns (Product) {}
 }
 
 message ProductRequest {
   string productId = 1;
 }
 
-message ProductResponse {
-  bool success = 1;
-  string id = 2;
-  string name = 3;
-  double price = 4;
-  int32 stock = 5;
-  string error = 6;
+message PageInfo {
+  int32 total = 1;
+  string nextCursor = 2;
+}
+
+message Product {
+  string id = 1;
+  string name = 2;
+  common.v1.Money price = 3;
+  int32 stock = 4;
+  string category = 5;
+  string description = 6;
 }
 
 message StockItem { string productId = 1; uint32 quantity = 2; }
@@ -30,6 +37,14 @@ message ReserveStockRequest { string orderId = 1; repeated StockItem items = 2; 
 message ReserveStockResponse { string reservationId = 1; }
 message ReleaseStockRequest { string orderId = 1; }
 message ReleaseStockResponse {}
-message ListProductsRequest { string queryJson = 1; }
-message ListProductsResponse { repeated ProductResponse products = 1; string metaJson = 2; }
+message ListProductsRequest {
+  string category = 1;
+  string search = 2;
+  int32 limit = 3;
+  string cursor = 4;
+}
+message ListProductsResponse {
+  repeated Product products = 1;
+  PageInfo page = 2;
+}
 message ProductMutationRequest { string productId = 1; string dataJson = 2; }

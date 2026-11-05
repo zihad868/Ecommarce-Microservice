@@ -39,7 +39,7 @@ function backend(): GatewayBackend {
     }),
     register: vi.fn(),
     refresh: vi.fn(),
-    product: vi.fn(),
+    product: vi.fn().mockResolvedValue({ id: 'prod-1', name: 'Product 1', stock: 10 }),
     order: vi.fn().mockResolvedValue({
       success: true,
       id: 'order-1',
@@ -48,7 +48,7 @@ function backend(): GatewayBackend {
       status: 'PENDING',
       error: '',
     }),
-    orders: vi.fn().mockResolvedValue({ success: true, orders: [], error: '' }),
+    orders: vi.fn().mockResolvedValue({ success: true, orders: [], nextCursor: '', error: '' }),
   };
 }
 
@@ -108,7 +108,7 @@ describe('gateway HTTP boundary', () => {
   });
   it('routes browsing and payment through their RPC adapters', async () => {
     const client = backend();
-    vi.mocked(client.products).mockResolvedValue({ products: [], metaJson: '{"total":0}' });
+    vi.mocked(client.products).mockResolvedValue({ products: [], page: { total: 0 } });
     vi.mocked(client.payOrder).mockResolvedValue({
       success: true,
       id: 'order-1',
@@ -119,7 +119,10 @@ describe('gateway HTTP boundary', () => {
     });
     const url = await listen(client);
     expect((await fetch(`${url}/api/products?limit=5`)).status).toBe(200);
-    expect(client.products).toHaveBeenCalledWith('{"limit":"5"}', expect.any(Metadata));
+    expect(client.products).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 5 }),
+      expect.any(Metadata),
+    );
     process.env.ENABLE_MOCK_PAYMENTS = 'true';
     try {
       const paid = await fetch(`${url}/api/orders/order-1/pay`, {
@@ -179,9 +182,13 @@ describe('gateway HTTP boundary', () => {
       headers: { authorization: 'Bearer token', 'x-correlation-id': 'request-123' },
     });
     expect(response.status).toBe(200);
-    expect(client.orders).toHaveBeenCalledWith('alice', expect.any(Metadata));
+    expect(client.orders).toHaveBeenCalledWith(
+      'alice',
+      expect.objectContaining({ limit: 50 }),
+      expect.any(Metadata),
+    );
     const call = vi.mocked(client.orders).mock.calls[0];
-    expect(call[1].get('x-correlation-id')).toEqual(['request-123']);
+    expect(call[2].get('x-correlation-id')).toEqual(['request-123']);
   });
   it('maps an unreachable identity service to 503', async () => {
     const client = backend();

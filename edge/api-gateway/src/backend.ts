@@ -8,13 +8,22 @@ export interface TokenResult {
   role: string;
   error: string;
 }
+export interface Money {
+  amount_minor?: string | number;
+  amount?: string;
+  currency?: string;
+}
 export interface ProductResult {
-  success: boolean;
   id: string;
   name: string;
-  price: number;
+  price?: Money | null;
   stock: number;
-  error: string;
+  category?: string;
+  description?: string;
+}
+export interface PageInfo {
+  total?: number;
+  nextCursor?: string;
 }
 export interface OrderResult {
   success: boolean;
@@ -49,9 +58,9 @@ export interface GatewayBackend {
   updateOrder(this: void, orderId: string, status: string, context: Metadata): Promise<OrderResult>;
   products(
     this: void,
-    query: string,
+    query: { category?: string; search?: string; limit?: number; cursor?: string } | string,
     context: Metadata,
-  ): Promise<{ products: ProductResult[]; metaJson: string }>;
+  ): Promise<{ products: ProductResult[]; page?: PageInfo | null; metaJson?: string }>;
   mutateProduct(
     this: void,
     action: 'create' | 'update' | 'delete',
@@ -69,8 +78,9 @@ export interface GatewayBackend {
   orders(
     this: void,
     userId: string,
+    pagination: { limit?: number; cursor?: string } | undefined,
     context: Metadata,
-  ): Promise<{ success: boolean; orders: OrderResult[]; error: string }>;
+  ): Promise<{ success: boolean; orders: OrderResult[]; nextCursor?: string; error: string }>;
 }
 
 export function createBackend(options: {
@@ -120,9 +130,18 @@ export function createBackend(options: {
       call((cb) => {
         order.UpdateOrderStatus({ orderId, status }, meta, { deadline: deadline() }, cb);
       }),
-    products: (queryJson, meta) =>
+    products: (query, meta) =>
       call((cb) => {
-        product.ListProducts({ queryJson }, meta, { deadline: deadline() }, cb);
+        const req =
+          typeof query === 'string'
+            ? { queryJson: query }
+            : {
+                category: query.category,
+                search: query.search,
+                limit: query.limit,
+                cursor: query.cursor,
+              };
+        product.ListProducts(req, meta, { deadline: deadline() }, cb);
       }),
     mutateProduct: (action, productId, dataJson, meta) =>
       call((cb) => {
@@ -156,9 +175,14 @@ export function createBackend(options: {
       call((cb) => {
         order.GetOrder({ orderId }, meta, { deadline: deadline() }, cb);
       }),
-    orders: (userId, meta) =>
+    orders: (userId, pagination, meta) =>
       call((cb) => {
-        order.GetOrdersByUser({ userId }, meta, { deadline: deadline() }, cb);
+        order.GetOrdersByUser(
+          { userId, limit: pagination?.limit, cursor: pagination?.cursor },
+          meta,
+          { deadline: deadline() },
+          cb,
+        );
       }),
     close: () => {
       for (const client of clients) client.close();

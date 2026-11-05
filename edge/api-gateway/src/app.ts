@@ -76,17 +76,24 @@ export function createApp(
       .parse(req.body);
     res.json({ success: true, data: await backend.refresh(refreshToken, context(req)) });
   });
+  const listProductsQuerySchema = z.object({
+    category: z.string().trim().optional(),
+    search: z.string().trim().optional(),
+    limit: z.coerce.number().int().positive().max(100).optional(),
+    cursor: z.string().optional(),
+  });
+
   app.get('/api/products', async (req, res) => {
-    const result = await backend.products(JSON.stringify(req.query), context(req));
+    const query = listProductsQuerySchema.parse(req.query);
+    const result = await backend.products(query, context(req));
     res.json({
       success: true,
       data: result.products,
-      meta: JSON.parse(result.metaJson) as unknown,
+      meta: result.page ?? (result.metaJson ? JSON.parse(result.metaJson) : undefined),
     });
   });
   app.get('/api/products/:id', async (req, res) => {
     const result = await backend.product(idSchema.parse(req.params.id), context(req));
-    if (!result.success) throw new ApiError(404, result.error || 'Product not found');
     res.json({ success: true, data: result });
   });
   const protect: RequestHandler = async (req, res, next) => {
@@ -178,9 +185,11 @@ export function createApp(
   }
   app.get('/api/orders', protect, async (req, res) => {
     const user = res.locals.user as { userId: string };
-    const result = await backend.orders(user.userId, context(req));
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+    const result = await backend.orders(user.userId, { limit, cursor }, context(req));
     if (!result.success) throw new ApiError(502, 'Order query failed');
-    res.json({ success: true, data: result.orders });
+    res.json({ success: true, data: result.orders, nextCursor: result.nextCursor });
   });
   app.get('/api/orders/:id', protect, async (req, res) => {
     const user = res.locals.user as { userId: string; role: string };

@@ -9,7 +9,6 @@ import { getProductDetails, reserveStock, releaseStockRemote } from '../grpc/grp
 import { validateTransition } from './orderStateMachine';
 import type {
   CreateOrderItemInput,
-  ListOrdersQuery,
   PayOrderInput,
   UpdateOrderStatusInput,
 } from '../validators/orderValidators';
@@ -54,18 +53,23 @@ export const createOrder = async (
     try {
       productResponse = await getProductDetails(item.productId);
     } catch (grpcErr) {
+      const code =
+        typeof grpcErr === 'object' && grpcErr !== null && 'code' in grpcErr
+          ? grpcErr.code
+          : undefined;
+      if (code === 5) {
+        throw new ApiError(httpStatus.BAD_REQUEST, `Product ${item.productId} not found`);
+      }
       const msg = grpcErr instanceof Error ? grpcErr.message : String(grpcErr);
       throw new ApiError(httpStatus.SERVICE_UNAVAILABLE, `Product Service unavailable: ${msg}`);
     }
 
-    if (!productResponse.success) {
-      throw new ApiError(
-        httpStatus.BAD_REQUEST,
-        productResponse.error || `Product ${item.productId} not found`,
-      );
-    }
-
-    const itemPrice = new Prisma.Decimal(productResponse.price);
+    const rawPrice =
+      productResponse.price && typeof productResponse.price === 'object'
+        ? (productResponse.price.amount ??
+          String(Number(productResponse.price.amount_minor ?? 0) / 100))
+        : String(productResponse.price ?? 0);
+    const itemPrice = new Prisma.Decimal(rawPrice);
     const lineTotal = itemPrice.mul(item.quantity);
     totalAmount = totalAmount.add(lineTotal);
 
@@ -189,48 +193,68 @@ export const createOrder = async (
   }
 };
 
-export const getOrders = async (userId: string, userRole: string, query: ListOrdersQuery) => {
-  const page = query.page;
-  const limit = Math.min(query.limit, 100);
-  const skip = (page - 1) * limit;
+function encodeCursor(order: { createdAt: Date; id: string }): string {
+  return Buffer.from(
+    JSON.stringify({ createdAt: order.createdAt.toISOString(), id: order.id }),
+  ).toString('base64');
+}
 
-  const where: Prisma.OrderWhereInput = {};
+function decodeCursor(cursorStr: string): { createdAt: Date; id: string } | null {
+  try {
+    const raw = Buffer.from(cursorStr, 'base64').toString('utf8');
+    const parsed = JSON.parse(raw) as { createdAt: string; id: string };
+    if (!parsed.createdAt || !parsed.id) return null;
+    return { createdAt: new Date(parsed.createdAt), id: parsed.id };
+  } catch {
+    return null;
+  }
+}
+
+export const getOrders = async (
+  userId: string,
+  userRole: string,
+  query: { limit?: number; cursor?: string; status?: OrderStatus; includeTotal?: boolean },
+) => {
+  const limit = Math.min(Math.max(query.limit ?? 20, 1), 100);
+  const base: Prisma.OrderWhereInput = {};
   if (userRole !== 'ADMIN') {
-    where.userId = userId;
+    base.userId = userId;
   }
   if (query.status) {
-    where.status = query.status;
+    base.status = query.status;
   }
 
-  // Cursor pagination support
-  let cursorObj: Prisma.OrderWhereUniqueInput | undefined;
-  if (query.cursor) {
-    cursorObj = { id: query.cursor };
+  const cursor = query.cursor ? decodeCursor(query.cursor) : null;
+
+  const rows = await prisma.order.findMany({
+    where: {
+      ...base,
+      ...(cursor && {
+        OR: [
+          { createdAt: { lt: cursor.createdAt } },
+          { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+        ],
+      }),
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: limit + 1,
+    include: { items: true },
+  });
+
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+  const lastItem = page[page.length - 1];
+  const nextCursor = hasMore && lastItem ? encodeCursor(lastItem) : null;
+
+  let total: number | undefined;
+  if (query.includeTotal) {
+    total = await prisma.order.count({ where: base });
   }
-
-  const [orders, total] = await Promise.all([
-    prisma.order.findMany({
-      where,
-      skip: cursorObj ? 1 : skip,
-      cursor: cursorObj,
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-      include: { items: true },
-    }),
-    prisma.order.count({ where }),
-  ]);
-
-  const nextCursor = orders.length === limit ? orders[orders.length - 1]?.id : null;
 
   return {
-    orders,
-    meta: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-      nextCursor,
-    },
+    orders: page,
+    nextCursor,
+    total,
   };
 };
 

@@ -26,12 +26,15 @@ message OrderResponse {
 
 message UserOrdersRequest {
   string userId = 1;
+  int32 limit = 2;
+  string cursor = 3;
 }
 
 message UserOrdersResponse {
   bool success = 1;
   repeated OrderResponse orders = 2;
   string error = 3;
+  string nextCursor = 4;
 }
 
 message OrderItemInput { string productId = 1; uint32 quantity = 2; }

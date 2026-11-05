@@ -29,7 +29,16 @@ vi.mock('../../services/order-service/src/grpc/grpcClients', async () => {
     releaseStockRemote: stock.releaseStock,
     getProductDetails: async (id) => {
       const product = await db.product.findUniqueOrThrow({ where: { id } });
-      return { success: true, ...product, price: Number(product.price), error: '' };
+      return {
+        id: product.id,
+        name: product.name,
+        price: {
+          amount: String(product.price),
+          amount_minor: Math.round(Number(product.price) * 100),
+          currency: 'USD',
+        },
+        stock: product.stock,
+      };
     },
   };
 });

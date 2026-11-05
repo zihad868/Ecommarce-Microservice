@@ -2,9 +2,15 @@
 
 
 export interface ListProductsRequest {
-  'queryJson'?: (string);
+  'category'?: (string);
+  'search'?: (string);
+  'limit'?: (number);
+  'cursor'?: (string);
 }
 
 export interface ListProductsRequest__Output {
-  'queryJson': (string);
+  'category': (string);
+  'search': (string);
+  'limit': (number);
+  'cursor': (string);
 }

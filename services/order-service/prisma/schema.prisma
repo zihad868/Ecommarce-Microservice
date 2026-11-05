@@ -33,6 +33,7 @@ model Order {
   @@index([status])
   @@index([createdAt])
   @@index([userId, createdAt])
+  @@index([userId, createdAt(sort: Desc), id(sort: Desc)])
 }
 
 model OrderItem {
@@ -80,4 +81,3 @@ model IdempotencyRecord {
   @@id([userId, key])
   @@index([userId, createdAt])
 }
-

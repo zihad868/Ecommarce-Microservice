@@ -6,10 +6,12 @@ export interface UserOrdersResponse {
   'success'?: (boolean);
   'orders'?: (_order_v1_OrderResponse)[];
   'error'?: (string);
+  'nextCursor'?: (string);
 }
 
 export interface UserOrdersResponse__Output {
   'success': (boolean);
   'orders': (_order_v1_OrderResponse__Output)[];
   'error': (string);
+  'nextCursor': (string);
 }
