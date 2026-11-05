@@ -4,20 +4,20 @@
   "description": "Production-grade e-commerce microservice system",
   "private": true,
   "workspaces": [
-    "packages/*",
-    "auth-service",
-    "product-service",
-    "order-service"
+    "ecommarce/packages/*",
+    "ecommarce/auth-service",
+    "ecommarce/product-service",
+    "ecommarce/order-service"
   ],
   "scripts": {
-    "build": "npm run build -w packages/common && npm run build -w auth-service -w product-service -w order-service",
-    "typecheck": "npm run typecheck -w packages/common -w auth-service -w product-service -w order-service",
+    "build": "npm run build -w @ecommerce/common && npm run build -w auth-service -w product-service -w order-service",
+    "typecheck": "npm run typecheck -w @ecommerce/common -w auth-service -w product-service -w order-service",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,json,md,yml,yaml}\"",
-    "test": "npm run test -w packages/common -w auth-service -w product-service -w order-service",
-    "test:coverage": "npm run test:coverage -w packages/common -w auth-service -w product-service -w order-service",
+    "test": "npm run test -w @ecommerce/common -w auth-service -w product-service -w order-service",
+    "test:coverage": "npm run test:coverage -w @ecommerce/common -w auth-service -w product-service -w order-service",
     "db:generate": "npm run db:generate -w auth-service -w product-service -w order-service",
     "db:migrate": "npm run db:migrate -w auth-service -w product-service -w order-service",
     "docker:up": "docker compose up --build",
@@ -42,11 +42,11 @@
   },
   "lint-staged": {
     "*.ts": [
-      "eslint --fix",
-      "prettier --write"
+      "npm exec -- eslint --fix",
+      "npm exec -- prettier --write"
     ],
     "*.{json,md,yml,yaml}": [
-      "prettier --write"
+      "npm exec -- prettier --write"
     ]
   },
   "engines": {

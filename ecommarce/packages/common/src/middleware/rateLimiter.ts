@@ -28,7 +28,7 @@ export const createRedisRateLimiter = (options: RateLimiterOptions): RateLimitRe
     max: options.max,
     standardHeaders: true,
     legacyHeaders: false,
-    store: store as any,
+    store: store,
     message: { success: false, message: options.message },
   });
 };
