@@ -26,6 +26,7 @@ vi.mock('../utils/prismaClient', () => ({
 vi.mock('../grpc/grpcClients', () => ({
   getProductDetails: vi.fn(),
   reserveStock: vi.fn(),
+  releaseStockRemote: vi.fn(),
 }));
 
 import { payOrder } from '../services/orderService';

@@ -1,6 +1,7 @@
 import { loadProduct } from '@ecommerce/proto-gen';
 import config from '../config';
 import { ApiError, grpcToHttp } from '@ecommerce/errors';
+import { invokeResilientGrpc, getClientCredentials } from '@ecommerce/grpc-kit';
 
 const productProto = loadProduct();
 
@@ -17,8 +18,6 @@ export interface ProductResponse {
   stock: number;
   error: string;
 }
-
-import { invokeResilientGrpc, getClientCredentials } from '@ecommerce/grpc-kit';
 
 // Wrapper for gRPC product check with deadline, retries with jitter, and circuit breaker
 export const getProductDetails = (
@@ -38,14 +37,49 @@ export const getProductDetails = (
   );
 };
 
-export const reserveStock = (orderId: string, items: { productId: string; quantity: number }[]) =>
-  new Promise<void>((resolve, reject) => {
-    productClient.ReserveStock(
-      { orderId, items },
-      { deadline: new Date(Date.now() + 10_000) },
-      (error) => {
-        if (error) reject(new ApiError(grpcToHttp(error.code), error.details));
-        else resolve();
+export const reserveStock = async (
+  orderId: string,
+  items: { productId: string; quantity: number }[],
+  timeoutMs = 10_000,
+): Promise<void> => {
+  try {
+    await invokeResilientGrpc<
+      { orderId: string; items: { productId: string; quantity: number }[] },
+      unknown
+    >(
+      'catalog-service',
+      'ReserveStock',
+      (req, meta, options, cb) => {
+        productClient.ReserveStock(req, meta, options, (error, response) => cb(error, response));
       },
+      { orderId, items },
+      { timeoutMs, maxRetries: 3 },
     );
-  });
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'code' in err && typeof err.code === 'number') {
+      const grpcErr = err as { code: number; details?: string; message: string };
+      throw new ApiError(grpcToHttp(grpcErr.code), grpcErr.details ?? grpcErr.message);
+    }
+    throw err;
+  }
+};
+
+export const releaseStockRemote = async (orderId: string, timeoutMs = 10_000): Promise<void> => {
+  try {
+    await invokeResilientGrpc<{ orderId: string }, unknown>(
+      'catalog-service',
+      'ReleaseStock',
+      (req, meta, options, cb) => {
+        productClient.ReleaseStock(req, meta, options, (error, response) => cb(error, response));
+      },
+      { orderId },
+      { timeoutMs, maxRetries: 3 },
+    );
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'code' in err && typeof err.code === 'number') {
+      const grpcErr = err as { code: number; details?: string; message: string };
+      throw new ApiError(grpcToHttp(grpcErr.code), grpcErr.details ?? grpcErr.message);
+    }
+    throw err;
+  }
+};

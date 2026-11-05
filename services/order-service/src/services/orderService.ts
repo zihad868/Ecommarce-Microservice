@@ -5,7 +5,7 @@ import { ApiError } from '@ecommerce/errors';
 import { type OrderCreatedEvent, type OrderItemEvent } from '@ecommerce/messaging-kit';
 import prisma, { OrderStatus, Prisma, type Order } from '../utils/prismaClient';
 import config from '../config';
-import { getProductDetails, reserveStock } from '../grpc/grpcClients';
+import { getProductDetails, reserveStock, releaseStockRemote } from '../grpc/grpcClients';
 import { validateTransition } from './orderStateMachine';
 import type {
   CreateOrderItemInput,
@@ -85,6 +85,8 @@ export const createOrder = async (
         .digest('hex')
     : uuidv4();
 
+  await reserveStock(orderId, items);
+
   try {
     const createdOrder = await prisma.$transaction(
       async (tx) => {
@@ -95,7 +97,6 @@ export const createOrder = async (
           });
           if (existing) return replay(existing);
         }
-        await reserveStock(orderId, items);
         const order = await tx.order.create({
           data: {
             id: orderId,
@@ -156,7 +157,7 @@ export const createOrder = async (
 
         return mapOrderResponse(order);
       },
-      { timeout: 30_000, maxWait: 30_000 },
+      { timeout: 10_000, maxWait: 10_000 },
     );
 
     return createdOrder;
@@ -176,6 +177,13 @@ export const createOrder = async (
         where: { userId_key: { userId, key: idempotencyKey } },
       });
       if (existing) return replay(existing);
+    }
+    // The order was not created: give the stock back now instead of waiting 15 minutes.
+    const exists = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true } });
+    if (!exists) {
+      await releaseStockRemote(orderId).catch((e) =>
+        logger.error({ e, orderId }, 'release failed'),
+      );
     }
     throw err;
   }

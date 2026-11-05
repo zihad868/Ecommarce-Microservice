@@ -24,10 +24,14 @@ vi.mock('../../services/identity-service/src/config', async () => {
 vi.mock('../../services/order-service/src/grpc/grpcClients', async () => {
   const stock = await import('../../services/catalog-service/src/services/stockService');
   const { default: db } = await import('../../services/catalog-service/src/utils/prismaClient');
-  return { reserveStock: stock.reserveStock, getProductDetails: async (id) => {
-    const product = await db.product.findUniqueOrThrow({ where: { id } });
-    return { success: true, ...product, price: Number(product.price), error: '' };
-  } };
+  return {
+    reserveStock: stock.reserveStock,
+    releaseStockRemote: stock.releaseStock,
+    getProductDetails: async (id) => {
+      const product = await db.product.findUniqueOrThrow({ where: { id } });
+      return { success: true, ...product, price: Number(product.price), error: '' };
+    },
+  };
 });
 import orders from '../../services/order-service/src/utils/prismaClient';
 import catalog from '../../services/catalog-service/src/utils/prismaClient';
