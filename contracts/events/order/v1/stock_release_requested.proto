@@ -7,3 +7,4 @@ message StockReleaseRequested {
   string reason = 3;
   string occurredAt = 4;
 }
+
