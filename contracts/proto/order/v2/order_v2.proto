@@ -5,7 +5,8 @@ import "common/v1/common.proto";
 
 service OrderService {
   rpc CreateOrder (CreateOrderRequest) returns (Order) {}
-  rpc PayOrder (PayOrderRequest) returns (Order) {}
+  // Retained for wire compatibility; no payment simulation is implemented.
+  rpc PayOrder (PayOrderRequest) returns (Order) { option deprecated = true; }
   rpc UpdateOrderStatus (UpdateOrderStatusRequest) returns (Order) {}
   rpc ReconcileReservation (OrderRequest) returns (ReconcileReservationResponse) {}
   rpc GetOrder (OrderRequest) returns (Order) {}

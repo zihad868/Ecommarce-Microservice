@@ -54,7 +54,6 @@ export interface GatewayBackend {
     key: string,
     context: Metadata,
   ): Promise<OrderResult>;
-  payOrder(this: void, orderId: string, method: string, context: Metadata): Promise<OrderResult>;
   updateOrder(
     this: void,
     orderId: string,
@@ -126,10 +125,6 @@ export function createBackend(options: {
     createOrder: (items, idempotencyKey, meta) =>
       call((cb) => {
         order.CreateOrder({ items, idempotencyKey }, meta, { deadline: deadline() }, cb);
-      }),
-    payOrder: (orderId, paymentMethod, meta) =>
-      call((cb) => {
-        order.PayOrder({ orderId, paymentMethod }, meta, { deadline: deadline() }, cb);
       }),
     updateOrder: (orderId, status, meta) =>
       call((cb) => {

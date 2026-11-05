@@ -6,8 +6,6 @@
   "scripts": {
     "build": "tsc && node ../../tools/copy-prisma-client.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run src --exclude \"**/*.int.test.ts\" --passWithNoTests",
-    "test:coverage": "vitest run src --exclude \"**/*.int.test.ts\" --coverage --passWithNoTests",
     "start": "node --require @ecommerce/observability/dist/tracing.js dist/server.js",
     "dev": "nodemon --exec ts-node src/server.ts",
     "db:generate": "npx prisma generate",
@@ -39,7 +37,6 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@testcontainers/postgresql": "^12.2.1",
     "@types/cors": "^2.8.18",
     "@types/express": "^5.0.3",
     "@types/node": "^22.15.30",

@@ -11,7 +11,7 @@ features.
    `pay:${orderId}` idempotency. Verify raw-body webhook signatures, deduplicate
    provider event IDs, and transactionally update payments and their outbox.
    Consume payment success/failure in order-service to pay or cancel/release
-   stock. Remove the mock payment route after this replacement works.
+   stock. Payment simulation has been removed; add the payment API with this integration.
 3. Add hashed, expiring single-use verification/reset tokens, login lockout,
    and optional TOTP MFA.
 4. Implement Redis carts with TTL and re-price items at checkout.

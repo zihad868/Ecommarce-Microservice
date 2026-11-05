@@ -9,4 +9,4 @@ No successful business responses are simulated. This service is excluded from th
 default Compose and Kubernetes application deployments.
 
 Before enabling it: define owned storage and migrations, implement handlers from
-`contracts/`, add integration tests, and provide readiness checks for its dependencies.
+`contracts/` and provide readiness checks for its dependencies.

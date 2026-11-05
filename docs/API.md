@@ -22,23 +22,22 @@ Errors now use an object instead of the previous string:
 correlation ID is generated and forwarded to gRPC. Internal error messages and
 details are withheld from clients and logged with request context.
 
-| Method | Path                     | Authentication                           | RPC                                       |
-| ------ | ------------------------ | ---------------------------------------- | ----------------------------------------- |
-| POST   | `/api/auth/register`     | Public                                   | `auth.v2.AuthService.Register`            |
-| POST   | `/api/auth/login`        | Public                                   | `auth.v2.AuthService.Login`               |
-| POST   | `/api/auth/refresh`      | Refresh token in body                    | `auth.v2.AuthService.Refresh`             |
-| POST   | `/api/auth/logout`       | Bearer token                             | `auth.v2.AuthService.Logout`              |
-| GET    | `/api/auth/me`           | Bearer token                             | `auth.v2.AuthService.GetUser`             |
-| GET    | `/api/products`          | Public                                   | `product.v1.ProductService.ListProducts`  |
-| GET    | `/api/products/:id`      | Public                                   | `product.v1.ProductService.GetProduct`    |
-| POST   | `/api/products`          | ADMIN                                    | `product.v1.ProductService.CreateProduct` |
-| PATCH  | `/api/products/:id`      | ADMIN                                    | `product.v1.ProductService.UpdateProduct` |
-| DELETE | `/api/products/:id`      | ADMIN                                    | `product.v1.ProductService.DeleteProduct` |
-| POST   | `/api/orders`            | Bearer token                             | `order.v2.OrderService.CreateOrder`       |
-| GET    | `/api/orders`            | Bearer token                             | `order.v2.OrderService.GetOrdersByUser`   |
-| GET    | `/api/orders/:id`        | Owner or ADMIN                           | `order.v2.OrderService.GetOrder`          |
-| PATCH  | `/api/orders/:id/status` | Owner cancellation or ADMIN              | `order.v2.OrderService.UpdateOrderStatus` |
-| POST   | `/api/orders/:id/pay`    | Owner or ADMIN; development mock enabled | `order.v2.OrderService.PayOrder`          |
+| Method | Path                     | Authentication              | RPC                                       |
+| ------ | ------------------------ | --------------------------- | ----------------------------------------- |
+| POST   | `/api/auth/register`     | Public                      | `auth.v2.AuthService.Register`            |
+| POST   | `/api/auth/login`        | Public                      | `auth.v2.AuthService.Login`               |
+| POST   | `/api/auth/refresh`      | Refresh token in body       | `auth.v2.AuthService.Refresh`             |
+| POST   | `/api/auth/logout`       | Bearer token                | `auth.v2.AuthService.Logout`              |
+| GET    | `/api/auth/me`           | Bearer token                | `auth.v2.AuthService.GetUser`             |
+| GET    | `/api/products`          | Public                      | `product.v1.ProductService.ListProducts`  |
+| GET    | `/api/products/:id`      | Public                      | `product.v1.ProductService.GetProduct`    |
+| POST   | `/api/products`          | ADMIN                       | `product.v1.ProductService.CreateProduct` |
+| PATCH  | `/api/products/:id`      | ADMIN                       | `product.v1.ProductService.UpdateProduct` |
+| DELETE | `/api/products/:id`      | ADMIN                       | `product.v1.ProductService.DeleteProduct` |
+| POST   | `/api/orders`            | Bearer token                | `order.v2.OrderService.CreateOrder`       |
+| GET    | `/api/orders`            | Bearer token                | `order.v2.OrderService.GetOrdersByUser`   |
+| GET    | `/api/orders/:id`        | Owner or ADMIN              | `order.v2.OrderService.GetOrder`          |
+| PATCH  | `/api/orders/:id/status` | Owner cancellation or ADMIN | `order.v2.OrderService.UpdateOrderStatus` |
 
 Register/login accept `{ "email": "customer@example.com", "password": "..." }`.
 Registration enforces the service password policy. Refresh accepts
@@ -55,7 +54,9 @@ Order listing returns `data` and `nextCursor` with a default limit of 50.
 
 Both v1 and v2 gRPC endpoints remain available. Deploy identity/order services
 with v2 support before deploying the updated gateway. Existing v1 schemas and
-the Buf compatibility baseline remain unchanged.
+the Buf compatibility baseline remain compatible. The legacy `PayOrder` RPC
+declarations are deprecated and return gRPC `UNIMPLEMENTED`; payment processing
+will be added through the payment service. There is no HTTP payment endpoint.
 
 | Error code                                                        | HTTP status |
 | ----------------------------------------------------------------- | ----------- |
@@ -71,9 +72,7 @@ the Buf compatibility baseline remain unchanged.
 | `DEPENDENCY_UNAVAILABLE`                                          | 503         |
 
 Legacy ApiError callers use `HTTP_<status>`; gRPC failures without domain
-metadata use `UPSTREAM_ERROR`. Deadlines map to 504, unavailable services to 503. The mock payment route returns 501 unless `ENABLE_MOCK_PAYMENTS=true`
-and the gateway is outside production; order-service also rejects it in
-production. Unknown routes return `ROUTE_NOT_FOUND`.
+metadata use `UPSTREAM_ERROR`. Deadlines map to 504 and unavailable services to 503. Unknown routes return `ROUTE_NOT_FOUND`.
 
 `/health/live` and `/health/ready` retain operations status responses. Readiness
 checks gRPC connectivity. Metrics use the internal gateway listener on port

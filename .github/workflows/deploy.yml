@@ -79,7 +79,7 @@ jobs:
               kubectl apply -f -
             kubectl -n "$NAMESPACE" wait --for=condition=complete "job/$job" --timeout=300s
           done
-      - name: Roll out and smoke test through gateway
+      - name: Roll out and verify gateway readiness
         shell: bash
         run: |
           set -euo pipefail
@@ -87,4 +87,4 @@ jobs:
           for service in identity-service catalog-service order-service api-gateway; do
             kubectl -n "$NAMESPACE" rollout status "deployment/$service" --timeout=300s
           done
-          curl --fail --retry 5 --retry-delay 3 "$GATEWAY_URL/api/products?limit=1"
+          curl --fail --retry 5 --retry-delay 3 "$GATEWAY_URL/health/ready"

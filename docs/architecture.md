@@ -54,8 +54,8 @@ as event consumers; they do not expose public business endpoints yet.
 
 Catalog still owns the existing stock column and OrderCreated consumer. Moving
 stock to inventory requires a data migration, reservation expiry, compensation,
-and a saga in order-service. Payment currently retains the legacy order payment
-behavior. Do not interpret either as an implemented inventory/payment saga.
+and a saga in order-service. Payment processing is not implemented; the order
+payment simulation has been removed. Neither is an implemented inventory/payment saga.
 
 Each existing service owns its database and baseline migration. New service
 databases, Redis cart state, provider integrations, OpenSearch projections, and

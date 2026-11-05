@@ -10,14 +10,9 @@ import {
 } from '@ecommerce/errors';
 import { type OrderCreatedEvent, type OrderItemEvent } from '@ecommerce/messaging-kit';
 import prisma, { OrderStatus, Prisma, type Order } from '../utils/prismaClient';
-import config from '../config';
 import { getProductDetails, reserveStock, releaseStockRemote } from '../grpc/grpcClients';
 import { validateTransition } from './orderStateMachine';
-import type {
-  CreateOrderItemInput,
-  PayOrderInput,
-  UpdateOrderStatusInput,
-} from '../validators/orderValidators';
+import type { CreateOrderItemInput, UpdateOrderStatusInput } from '../validators/orderValidators';
 import { createLogger } from '@ecommerce/observability';
 const logger = createLogger({ serviceName: 'order-service' });
 
@@ -321,56 +316,6 @@ export const updateOrderStatus = async (
     return tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true } });
   });
 
-  return updated;
-};
-
-/**
- * Payment-service stub / extension point.
- * Simulates payment processing and transitions order through the state machine:
- * PENDING -> CONFIRMED -> PAID  (two-step if order is PENDING, one-step if already CONFIRMED).
- */
-export const payOrder = async (
-  orderId: string,
-  userId: string,
-  userRole: string,
-  input: PayOrderInput,
-): Promise<Order> => {
-  if (config.NODE_ENV === 'production') throw new ForbiddenError('Mock payment disabled');
-
-  const order = await getOrderById(orderId, userId, userRole);
-
-  if (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.CONFIRMED) {
-    throw new ValidationError(
-      `Cannot pay for order with status '${order.status}'. Order must be PENDING or CONFIRMED.`,
-    );
-  }
-
-  logger.info(
-    { orderId, amount: order.totalAmount.toString(), paymentMethod: input.paymentMethod },
-    'Processing payment',
-  );
-
-  const updated = await prisma.$transaction(async (tx) => {
-    let currentStatus = order.status;
-    if (currentStatus === OrderStatus.PENDING) {
-      validateTransition(currentStatus, OrderStatus.CONFIRMED);
-      const { count } = await tx.order.updateMany({
-        where: { id: orderId, status: currentStatus },
-        data: { status: OrderStatus.CONFIRMED },
-      });
-      if (count === 0) throw new ConcurrentModificationError();
-      currentStatus = OrderStatus.CONFIRMED;
-    }
-    validateTransition(currentStatus, OrderStatus.PAID);
-    const { count } = await tx.order.updateMany({
-      where: { id: orderId, status: currentStatus },
-      data: { status: OrderStatus.PAID },
-    });
-    if (count === 0) throw new ConcurrentModificationError();
-    return tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true } });
-  });
-
-  logger.info({ orderId }, 'Payment captured successfully');
   return updated;
 };
 

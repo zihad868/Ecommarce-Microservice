@@ -4,7 +4,8 @@ package order.v1;
 
 service OrderService {
   rpc CreateOrder (CreateOrderRequest) returns (OrderResponse) {}
-  rpc PayOrder (PayOrderRequest) returns (OrderResponse) {}
+  // Retained for wire compatibility; no payment simulation is implemented.
+  rpc PayOrder (PayOrderRequest) returns (OrderResponse) { option deprecated = true; }
   rpc UpdateOrderStatus (UpdateOrderStatusRequest) returns (OrderResponse) {}
   rpc ReconcileReservation (OrderRequest) returns (ReconcileReservationResponse) {}
   rpc GetOrder (OrderRequest) returns (OrderResponse) {}

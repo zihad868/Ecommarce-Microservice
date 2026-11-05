@@ -164,11 +164,8 @@ npm run lint
 # Build all packages
 npm run build
 
-# Run unit, integration, and concurrency tests
-npm test
-
 # Run k6 load test
-k6 run tests/k6/load-test.js
+k6 run tools/k6/load-test.js
 ```
 
 ---

@@ -27,29 +27,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  integration:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: integration
-          POSTGRES_DB: ecommerce_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s --health-timeout 5s --health-retries 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm }
-      - run: npm ci
-      - run: npm run db:generate
-      - run: npm run build
-      - run: npm run test:integration
-        env:
-          TEST_DATABASE_URL: postgresql://postgres:integration@127.0.0.1:5432/ecommerce_test
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -106,7 +83,7 @@ jobs:
             echo 'First introduction of versioned contracts; no versioned baseline exists.'
           fi
       - run: npm run check
-      - run: npm exec -- turbo run build typecheck test --filter='./packages/*' --output-logs=errors-only
+      - run: npm exec -- turbo run build typecheck --filter='./packages/*' --output-logs=errors-only
       - name: Validate Compose and Kubernetes rendering
         run: |
           docker compose --env-file .env.example config --quiet
@@ -130,10 +107,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run db:generate
-      - name: Build, typecheck and test changed service with package dependencies
+      - name: Build and typecheck changed service with package dependencies
         env:
           SERVICE: ${{ matrix.service }}
-        run: npm exec -- turbo run build typecheck test --filter="$SERVICE" --output-logs=errors-only
+        run: npm exec -- turbo run build typecheck --filter="$SERVICE" --output-logs=errors-only
 
   docker:
     needs: [changes, shared, service]

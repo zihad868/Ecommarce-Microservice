@@ -41,13 +41,7 @@ export const updateOrderStatusSchema = z.object({
   status: z.enum(['PENDING', 'CONFIRMED', 'PAID', 'SHIPPED', 'COMPLETED', 'CANCELLED']),
 });
 
-export const payOrderSchema = z.object({
-  paymentMethod: z.enum(['CREDIT_CARD', 'DEBIT_CARD', 'PAYPAL', 'MOCK']).default('MOCK'),
-  transactionId: z.string().optional(),
-});
-
 export type CreateOrderItemInput = z.infer<typeof orderItemInputSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type ListOrdersQuery = z.infer<typeof listOrdersQuerySchema>;
 export type UpdateOrderStatusInput = z.infer<typeof updateOrderStatusSchema>;
-export type PayOrderInput = z.infer<typeof payOrderSchema>;

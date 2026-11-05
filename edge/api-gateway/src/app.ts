@@ -147,31 +147,6 @@ export function createApp(
       .status(201)
       .json({ success: true, data: await backend.createOrder(input.items, key, context(req)) });
   });
-  app.post(
-    '/api/orders/:id/pay',
-    protect,
-    (_req, _res, next) => {
-      const mockPaymentsEnabled =
-        process.env.ENABLE_MOCK_PAYMENTS === 'true' && process.env.NODE_ENV !== 'production';
-      if (!mockPaymentsEnabled) throw new ApiError(501, 'Payments are not available yet');
-      next();
-    },
-    async (req, res) => {
-      const input = z
-        .object({
-          paymentMethod: z.enum(['MOCK', 'CREDIT_CARD', 'DEBIT_CARD', 'PAYPAL']).default('MOCK'),
-        })
-        .parse(req.body ?? {});
-      res.json({
-        success: true,
-        data: await backend.payOrder(
-          idSchema.parse(req.params.id),
-          input.paymentMethod,
-          context(req),
-        ),
-      });
-    },
-  );
   app.patch('/api/orders/:id/status', protect, async (req, res) => {
     const input = z
       .object({

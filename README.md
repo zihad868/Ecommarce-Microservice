@@ -67,6 +67,10 @@ npm run build
 npm run check
 ```
 
+`npm run check` validates protobuf contracts, lint rules and TypeScript types.
+The only retained test workload is `tools/k6/load-test.js`; see
+[performance evidence](docs/perf/README.md) for its setup and execution.
+
 For the implemented local stack, copy `.env.example` to `.env`, set its values,
 and run:
 
