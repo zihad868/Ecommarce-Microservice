@@ -1,7 +1,7 @@
 import type { Server as HttpServer } from 'http';
 import type * as grpc from '@grpc/grpc-js';
 import type { Logger } from 'pino';
-import { shutdownTracing } from '@ecommerce/observability';
+import { createLogger, shutdownTracing } from '@ecommerce/observability';
 
 export interface GracefulShutdownConfig {
   serviceName: string;
@@ -17,6 +17,7 @@ export interface GracefulShutdownConfig {
  */
 export const registerGracefulShutdown = (config: GracefulShutdownConfig): void => {
   const timeoutMs = config.timeoutMs ?? 10000;
+  const logger = config.logger ?? createLogger({ serviceName: config.serviceName });
   let isShuttingDown = false;
 
   const shutdown = async (signal: string, exitCode = 0): Promise<void> => {
@@ -25,20 +26,13 @@ export const registerGracefulShutdown = (config: GracefulShutdownConfig): void =
     }
     isShuttingDown = true;
 
-    if (config.logger) {
-      config.logger.info({ signal, service: config.serviceName }, 'Initiating graceful shutdown');
-    } else {
-      console.log(`[Shutdown] Initiating graceful shutdown for ${config.serviceName} (${signal})`);
-    }
+    logger.info({ signal, service: config.serviceName }, 'Initiating graceful shutdown');
 
     // Force exit timer in case hanging resources prevent clean exit
     const forceExitTimer = setTimeout(() => {
-      const msg = `[Shutdown] Graceful shutdown timed out after ${String(timeoutMs)}ms. Forcing exit.`;
-      if (config.logger) {
-        config.logger.error(msg);
-      } else {
-        console.error(msg);
-      }
+      logger.error(
+        `[Shutdown] Graceful shutdown timed out after ${String(timeoutMs)}ms. Forcing exit.`,
+      );
       process.exit(1);
     }, timeoutMs);
     forceExitTimer.unref();
@@ -48,8 +42,8 @@ export const registerGracefulShutdown = (config: GracefulShutdownConfig): void =
       if (config.httpServer) {
         await new Promise<void>((resolve) => {
           config.httpServer?.close((err) => {
-            if (err && config.logger) {
-              config.logger.warn({ err }, 'Error closing HTTP server');
+            if (err) {
+              logger.warn({ err }, 'Error closing HTTP server');
             }
             resolve();
           });
@@ -74,19 +68,11 @@ export const registerGracefulShutdown = (config: GracefulShutdownConfig): void =
       }
       await shutdownTracing();
 
-      if (config.logger) {
-        config.logger.info(`[Shutdown] ${config.serviceName} gracefully stopped`);
-      } else {
-        console.log(`[Shutdown] ${config.serviceName} gracefully stopped`);
-      }
+      logger.info(`[Shutdown] ${config.serviceName} gracefully stopped`);
 
       process.exit(exitCode);
-    } catch (err: any) {
-      if (config.logger) {
-        config.logger.error({ err }, 'Error during graceful shutdown');
-      } else {
-        console.error('[Shutdown] Error during graceful shutdown:', err);
-      }
+    } catch (err: unknown) {
+      logger.error({ err }, 'Error during graceful shutdown');
       process.exit(1);
     }
   };
@@ -100,20 +86,12 @@ export const registerGracefulShutdown = (config: GracefulShutdownConfig): void =
   });
 
   process.on('uncaughtException', (err: Error) => {
-    if (config.logger) {
-      config.logger.fatal({ err }, 'Uncaught exception');
-    } else {
-      console.error('[Process] Uncaught exception:', err);
-    }
+    logger.fatal({ err }, 'Uncaught exception');
     void shutdown('uncaughtException', 1);
   });
 
-  process.on('unhandledRejection', (reason: any) => {
-    if (config.logger) {
-      config.logger.fatal({ reason }, 'Unhandled rejection');
-    } else {
-      console.error('[Process] Unhandled rejection:', reason);
-    }
+  process.on('unhandledRejection', (reason: unknown) => {
+    logger.fatal({ reason }, 'Unhandled rejection');
     void shutdown('unhandledRejection', 1);
   });
 };

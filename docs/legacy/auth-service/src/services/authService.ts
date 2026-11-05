@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import * as argon2 from 'argon2';
 import httpStatus from 'http-status';
-import { ApiError } from '@ecommerce/common';
+import { ApiError } from '@ecommerce/errors';
 import config from '../config';
 import prisma, { Role } from '../utils/prismaClient';
 import { getRedisClient } from '../utils/redisClient';

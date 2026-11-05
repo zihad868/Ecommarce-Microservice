@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import httpStatus from 'http-status';
-import { ApiError, catchAsync, sendResponse } from '@ecommerce/common';
+import { ApiError, catchAsync, sendResponse } from '@ecommerce/errors';
 import * as authService from '../services/authService';
 import type { LoginInput, RefreshTokenInput, RegisterInput } from '../validators/authValidators';
 

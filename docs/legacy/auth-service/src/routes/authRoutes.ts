@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { validateRequest } from '@ecommerce/common';
+import { validateRequest } from '@ecommerce/errors';
 import { getMe, login, logout, refresh, register } from '../controllers/authController';
 import { protect } from '../middlewares/authMiddleware';
 import { loginSchema, refreshTokenSchema, registerSchema } from '../validators/authValidators';

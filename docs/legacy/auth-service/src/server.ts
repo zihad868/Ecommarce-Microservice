@@ -12,7 +12,7 @@ import {
   metricsHandler,
   metricsMiddleware,
   registerGracefulShutdown,
-} from '@ecommerce/common';
+} from '@ecommerce/errors';
 import config from './config';
 import { startGrpcServer } from './grpc/authServer';
 import authRoutes from './routes/authRoutes';

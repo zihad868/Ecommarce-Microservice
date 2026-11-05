@@ -18,7 +18,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@ecommerce/common": "*",
+    "@ecommerce/errors": "*",
     "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.8.1",
     "@prisma/client": "^6.19.3",
