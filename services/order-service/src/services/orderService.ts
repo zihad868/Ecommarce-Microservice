@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ApiError } from '@ecommerce/errors';
 import { type OrderCreatedEvent, type OrderItemEvent } from '@ecommerce/messaging-kit';
 import prisma, { OrderStatus, Prisma, type Order } from '../utils/prismaClient';
+import config from '../config';
 import { getProductDetails, reserveStock } from '../grpc/grpcClients';
 import { validateTransition } from './orderStateMachine';
 import type {
@@ -299,6 +300,8 @@ export const payOrder = async (
   userRole: string,
   input: PayOrderInput,
 ): Promise<Order> => {
+  if (config.NODE_ENV === 'production') throw new ApiError(403, 'Mock payment disabled');
+
   const order = await getOrderById(orderId, userId, userRole);
 
   if (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.CONFIRMED) {

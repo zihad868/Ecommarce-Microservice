@@ -120,12 +120,44 @@ describe('gateway HTTP boundary', () => {
     const url = await listen(client);
     expect((await fetch(`${url}/api/products?limit=5`)).status).toBe(200);
     expect(client.products).toHaveBeenCalledWith('{"limit":"5"}', expect.any(Metadata));
-    const paid = await fetch(`${url}/api/orders/order-1/pay`, {
+    process.env.ENABLE_MOCK_PAYMENTS = 'true';
+    try {
+      const paid = await fetch(`${url}/api/orders/order-1/pay`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer token' },
+      });
+      expect(paid.status).toBe(200);
+      expect(client.payOrder).toHaveBeenCalledWith('order-1', 'MOCK', expect.any(Metadata));
+    } finally {
+      delete process.env.ENABLE_MOCK_PAYMENTS;
+    }
+  });
+  it('gates mock payments with 501 when mock payments are disabled or in production', async () => {
+    const client = backend();
+    const url = await listen(client);
+    // 1. Disabled by default
+    delete process.env.ENABLE_MOCK_PAYMENTS;
+    const res1 = await fetch(`${url}/api/orders/order-1/pay`, {
       method: 'POST',
       headers: { authorization: 'Bearer token' },
     });
-    expect(paid.status).toBe(200);
-    expect(client.payOrder).toHaveBeenCalledWith('order-1', 'MOCK', expect.any(Metadata));
+    expect(res1.status).toBe(501);
+    expect(await res1.json()).toEqual({ success: false, error: 'Payments are not available yet' });
+
+    // 2. In production mode even if ENABLE_MOCK_PAYMENTS is true
+    process.env.ENABLE_MOCK_PAYMENTS = 'true';
+    const oldEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const res2 = await fetch(`${url}/api/orders/order-1/pay`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer token' },
+      });
+      expect(res2.status).toBe(501);
+    } finally {
+      process.env.NODE_ENV = oldEnv;
+      delete process.env.ENABLE_MOCK_PAYMENTS;
+    }
   });
   it('rejects order reads without authentication before contacting order service', async () => {
     const client = backend();
