@@ -38,7 +38,7 @@ import catalog from '../../services/catalog-service/src/utils/prismaClient';
 import identity from '../../services/identity-service/src/utils/prismaClient';
 import { createOrder, payOrder, reconcileReservation, updateOrderStatus } from '../../services/order-service/src/services/orderService';
 import { releaseStock, reserveStock } from '../../services/catalog-service/src/services/stockService';
-import { processOutboxEvents, maintainOutbox } from '../../services/order-service/src/events/outboxWorker';
+import { processOutboxEvents, maintainOutbox } from '../../services/order-service/src/events/outbox';
 import { publishEvent } from '../../services/order-service/src/events/kafka';
 import { registerUser, refreshTokens } from '../../services/identity-service/src/services/authService';
 import { localTokenVerifier } from '../../edge/api-gateway/src/tokenVerifier';

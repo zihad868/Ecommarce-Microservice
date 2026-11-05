@@ -4,7 +4,7 @@ import config from './config';
 import prisma from './utils/prismaClient';
 import { startGrpcServer } from './grpc/orderServer';
 import { connectKafkaProducer, disconnectKafkaProducer } from './events/kafka';
-import { startOutboxWorker, stopOutboxWorker } from './events/outboxWorker';
+import { startOutboxWorker, stopOutboxWorker } from './events/outbox';
 
 const logger = createLogger({ serviceName: 'order-service' });
 initMetrics('order-service');

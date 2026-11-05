@@ -5,7 +5,7 @@ import config from './config';
 import prisma from './utils/prismaClient';
 import { startGrpcServer } from './grpc/productServer';
 import { connectKafkaConsumer, disconnectKafkaConsumer } from './events/kafka';
-import { startOutboxWorker, stopOutboxWorker } from './events/outboxWorker';
+import { startOutboxWorker, stopOutboxWorker } from './events/outbox';
 import { startReservationWorker, stopReservationWorker } from './events/reservationWorker';
 
 const logger = createLogger({ serviceName: 'catalog-service' });
