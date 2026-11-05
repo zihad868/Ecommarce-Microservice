@@ -100,6 +100,34 @@ describe('PostgreSQL concurrency', () => {
     expect(await orders.order.count()).toBe(1);
     expect((await catalog.product.findUniqueOrThrow({ where: { id: 'stock' } })).stock).toBe(9);
   });
+  it('reserveStock twice, same orderId: returns same reservation and decrements stock once', async () => {
+    const items = [{ productId: 'stock', quantity: 2 }];
+    const res1 = await reserveStock('order-dup-1', items);
+    const res2 = await reserveStock('order-dup-1', items);
+    expect(res1.reservationId).toBe(res2.reservationId);
+    expect((await catalog.product.findUniqueOrThrow({ where: { id: 'stock' } })).stock).toBe(8);
+  });
+  it('reserveStock same orderId, different items: throws 422', async () => {
+    await reserveStock('order-mismatch-1', [{ productId: 'stock', quantity: 1 }]);
+    await expect(reserveStock('order-mismatch-1', [{ productId: 'stock', quantity: 2 }])).rejects.toMatchObject({ statusCode: 422 });
+  });
+  it('catalog consumer receives the same event twice: processes event once (idempotent)', async () => {
+    const eventId = 'dup-event-1';
+    const orderId = 'dup-order-1';
+    await catalog.stockReservation.create({
+      data: { orderId, status: 'RESERVED', items: [{ productId: 'stock', quantity: 1 }] },
+    });
+    const handleEvent = async (tx) => {
+      const alreadyProcessed = await tx.processedEvent.findUnique({ where: { eventId } });
+      if (alreadyProcessed) return;
+      await tx.processedEvent.create({ data: { eventId, eventType: 'OrderCreated' } });
+      await tx.product.update({ where: { id: 'stock' }, data: { stock: { decrement: 1 } } });
+    };
+    await catalog.$transaction(handleEvent);
+    await catalog.$transaction(handleEvent);
+    expect((await catalog.product.findUniqueOrThrow({ where: { id: 'stock' } })).stock).toBe(9);
+    expect(await catalog.processedEvent.count({ where: { eventId } })).toBe(1);
+  });
   it('rolls back all stock when a multi-product reservation fails', async () => {
     await expect(reserveStock('multi', [{ productId: 'stock', quantity: 2 }, { productId: 'missing', quantity: 1 }])).rejects.toThrow();
     expect((await catalog.product.findUniqueOrThrow({ where: { id: 'stock' } })).stock).toBe(10);
@@ -134,4 +162,20 @@ it('verifies RS256 locally, rejects revoked tokens, and tolerates Redis failure'
   expect((await localTokenVerifier(key, redis)(token)).userId).toBe('buyer');
   redis.get.mockResolvedValue(String(Date.now() + 1));
   await expect(localTokenVerifier(key, redis)(token)).rejects.toMatchObject({ statusCode: 401 });
+
+  // Rejects wrong issuer
+  const wrongIssuer = jwt.sign({ id: 'buyer', role: 'USER', issuedAt: Date.now() }, privateKey, { algorithm: 'RS256', expiresIn: '15m', issuer: 'wrong-issuer', audience: 'ecommerce-gateway' });
+  await expect(localTokenVerifier(key, redis)(wrongIssuer)).rejects.toMatchObject({ statusCode: 401 });
+
+  // Rejects wrong audience
+  const wrongAud = jwt.sign({ id: 'buyer', role: 'USER', issuedAt: Date.now() }, privateKey, { algorithm: 'RS256', expiresIn: '15m', issuer: 'ecommerce-identity', audience: 'wrong-audience' });
+  await expect(localTokenVerifier(key, redis)(wrongAud)).rejects.toMatchObject({ statusCode: 401 });
+
+  // Rejects wrong algorithm (HS256)
+  const wrongAlg = jwt.sign({ id: 'buyer', role: 'USER', issuedAt: Date.now() }, 'secret', { algorithm: 'HS256', expiresIn: '15m', issuer: 'ecommerce-identity', audience: 'ecommerce-gateway' });
+  await expect(localTokenVerifier(key, redis)(wrongAlg)).rejects.toMatchObject({ statusCode: 401 });
+
+  // Rejects expired token
+  const expired = jwt.sign({ id: 'buyer', role: 'USER', issuedAt: Date.now() - 3600_000 }, privateKey, { algorithm: 'RS256', expiresIn: '-1s', issuer: 'ecommerce-identity', audience: 'ecommerce-gateway' });
+  await expect(localTokenVerifier(key, redis)(expired)).rejects.toMatchObject({ statusCode: 401 });
 });
