@@ -8,6 +8,7 @@ export interface MetricsRegistryBundle {
   grpcRequestCounter: Counter;
   grpcRequestDuration: Histogram;
   outboxRows: client.Gauge;
+  redisRevocationErrors: Counter;
 }
 
 let metricsBundle: MetricsRegistryBundle | null = null;
@@ -52,6 +53,12 @@ export const initMetrics = (serviceName: string): MetricsRegistryBundle => {
     registers: [register],
   });
 
+  const redisRevocationErrors = new client.Counter({
+    name: 'redis_revocation_errors_total',
+    help: 'Total errors querying Redis for token revocation',
+    registers: [register],
+  });
+
   metricsBundle = {
     outboxRows: new client.Gauge({
       name: 'outbox_rows',
@@ -59,6 +66,7 @@ export const initMetrics = (serviceName: string): MetricsRegistryBundle => {
       labelNames: ['status'],
       registers: [register],
     }),
+    redisRevocationErrors,
     register,
     httpRequestCounter,
     httpRequestDuration,

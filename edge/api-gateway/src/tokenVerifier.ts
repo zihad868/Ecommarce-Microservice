@@ -1,9 +1,12 @@
 import jwt from 'jsonwebtoken';
 import { ApiError } from '@ecommerce/errors';
+import { getMetricsBundle } from '@ecommerce/observability';
 import type { TokenResult } from './backend';
+
 export function localTokenVerifier(
   publicKey: string,
   revocation: { get(key: string): Promise<string | null> },
+  redisRevocationErrors: { inc(): void } = getMetricsBundle().redisRevocationErrors,
 ) {
   return async (token: string): Promise<TokenResult> => {
     let payload: jwt.JwtPayload;
@@ -26,10 +29,15 @@ export function localTokenVerifier(
       throw new ApiError(401, 'Invalid token');
     }
     let cutoff: string | null = null;
+    const key = `auth:revoked-before:${String(payload.id)}`;
     try {
-      cutoff = await revocation.get(`auth:revoked-before:${String(payload.id)}`);
+      cutoff = await revocation.get(key);
     } catch {
-      /* Redis outage degrades to signature and expiry validation. */
+      redisRevocationErrors.inc();
+      if (payload.role === 'ADMIN') {
+        throw new ApiError(503, 'Session check unavailable');
+      }
+      /* Redis outage degrades to signature and expiry validation for regular users. */
     }
     if (cutoff && Number(payload.issuedAt) <= Number(cutoff))
       throw new ApiError(401, 'Token revoked');

@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 
 const tlsMaterial = () => {
   const { GRPC_TLS_CA, GRPC_TLS_CERT, GRPC_TLS_KEY } = process.env;
+  const required =
+    process.env.GRPC_TLS_REQUIRED === 'true' || process.env.NODE_ENV === 'production';
   if (!GRPC_TLS_CA || !GRPC_TLS_CERT || !GRPC_TLS_KEY) {
-    if (process.env.GRPC_TLS_REQUIRED === 'true') throw new Error('gRPC mTLS material is required');
+    if (required) throw new Error('gRPC mTLS material is required');
     return null;
   }
   return {

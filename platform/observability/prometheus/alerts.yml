@@ -21,3 +21,11 @@ groups:
         for: 10m
         labels: { severity: warning }
         annotations: { summary: 'Outbox backlog continues growing' }
+
+  - name: security
+    rules:
+      - alert: RedisRevocationErrors
+        expr: rate(redis_revocation_errors_total[5m]) > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations: { summary: 'Token revocation check Redis errors occurring' }
