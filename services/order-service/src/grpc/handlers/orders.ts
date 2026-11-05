@@ -1,5 +1,5 @@
 import { unary, userContext } from '@ecommerce/grpc-kit';
-import { ApiError } from '@ecommerce/errors';
+import { ValidationError, ForbiddenError } from '@ecommerce/errors';
 import type { OrderServiceHandlers } from '@ecommerce/proto-gen';
 import * as orders from '../../services/orderService';
 import {
@@ -24,7 +24,7 @@ export const orderHandlers: OrderServiceHandlers = {
   GetOrdersByUser: unary(async (request, call) => {
     const user = userContext(call.metadata);
     if (request.userId !== user.userId && user.role !== 'ADMIN')
-      throw new ApiError(403, 'Forbidden');
+      throw new ForbiddenError('Forbidden');
     const limit = request.limit ? Number(request.limit) : 50;
     const result = await orders.getOrders(request.userId, user.role, {
       limit,
@@ -40,7 +40,11 @@ export const orderHandlers: OrderServiceHandlers = {
   CreateOrder: unary(async (request, call) => {
     const user = userContext(call.metadata);
     const input = createOrderSchema.safeParse(request);
-    if (!input.success) throw new ApiError(400, 'Invalid order');
+    if (!input.success)
+      throw new ValidationError(
+        'Invalid order',
+        input.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+      );
     return response(
       await orders.createOrder(user.userId, input.data.items, request.idempotencyKey || undefined),
     );
@@ -48,13 +52,21 @@ export const orderHandlers: OrderServiceHandlers = {
   PayOrder: unary(async (request, call) => {
     const user = userContext(call.metadata);
     const input = payOrderSchema.safeParse({ paymentMethod: request.paymentMethod || undefined });
-    if (!input.success) throw new ApiError(400, 'Invalid payment');
+    if (!input.success)
+      throw new ValidationError(
+        'Invalid payment',
+        input.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+      );
     return response(await orders.payOrder(request.orderId, user.userId, user.role, input.data));
   }),
   UpdateOrderStatus: unary(async (request, call) => {
     const user = userContext(call.metadata);
     const input = updateOrderStatusSchema.safeParse(request);
-    if (!input.success) throw new ApiError(400, 'Invalid status');
+    if (!input.success)
+      throw new ValidationError(
+        'Invalid status',
+        input.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+      );
     return response(
       await orders.updateOrderStatus(request.orderId, input.data, user.userId, user.role),
     );

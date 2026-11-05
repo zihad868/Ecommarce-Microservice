@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { ApiError } from '@ecommerce/errors';
+import {
+  ValidationError,
+  IdempotencyConflictError,
+  ConcurrentModificationError,
+} from '@ecommerce/errors';
 import prisma from '../utils/prismaClient';
 import { decrementProductStockTx, invalidateProductCache } from './productService';
 
@@ -8,11 +12,11 @@ export interface StockItem {
   quantity: number;
 }
 const canonical = (items: StockItem[]) => {
-  if (!items.length || items.length > 100) throw new ApiError(400, 'Invalid items');
+  if (!items.length || items.length > 100) throw new ValidationError('Invalid items');
   const merged = new Map<string, number>();
   for (const item of items) {
     if (!item.productId || !Number.isSafeInteger(item.quantity) || item.quantity < 1)
-      throw new ApiError(400, 'Invalid quantity');
+      throw new ValidationError('Invalid quantity');
     merged.set(item.productId, (merged.get(item.productId) ?? 0) + item.quantity);
   }
   return [...merged]
@@ -20,7 +24,7 @@ const canonical = (items: StockItem[]) => {
     .map(([productId, quantity]) => ({ productId, quantity }));
 };
 export const reserveStock = async (orderId: string, input: StockItem[]) => {
-  if (!orderId) throw new ApiError(400, 'Order ID required');
+  if (!orderId) throw new ValidationError('Order ID required');
   const items = canonical(input);
   const reservation = await prisma.$transaction(
     async (tx) => {
@@ -31,9 +35,9 @@ export const reserveStock = async (orderId: string, input: StockItem[]) => {
           JSON.stringify(canonical(existing.items as unknown as StockItem[])) !==
           JSON.stringify(items)
         )
-          throw new ApiError(422, 'Reservation reused with different items');
+          throw new IdempotencyConflictError('Reservation reused with different items');
         if (existing.status === 'RELEASED')
-          throw new ApiError(409, 'Reservation has expired or was released');
+          throw new ConcurrentModificationError('Reservation has expired or was released');
         return existing;
       }
       for (const item of items) await decrementProductStockTx(tx, item.productId, item.quantity);

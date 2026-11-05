@@ -1,0 +1,20 @@
+syntax = "proto3";
+package auth.v2;
+
+// Rejections use gRPC errors and error metadata, never a response error field.
+service AuthService {
+  rpc ValidateToken (TokenRequest) returns (TokenIdentity) {}
+  rpc Register (CredentialsRequest) returns (Session) {}
+  rpc Login (CredentialsRequest) returns (Session) {}
+  rpc Refresh (RefreshRequest) returns (Tokens) {}
+  rpc Logout (RefreshRequest) returns (LogoutResponse) {}
+  rpc GetUser (TokenRequest) returns (User) {}
+}
+message CredentialsRequest { string email = 1; string password = 2; }
+message User { string id = 1; string email = 2; string role = 3; }
+message Tokens { string accessToken = 1; string refreshToken = 2; }
+message Session { User user = 1; Tokens tokens = 2; }
+message RefreshRequest { string refreshToken = 1; }
+message TokenRequest { string token = 1; }
+message TokenIdentity { string userId = 1; string role = 2; }
+message LogoutResponse {}

@@ -1,5 +1,5 @@
 import { unary, requireAdmin } from '@ecommerce/grpc-kit';
-import { ApiError } from '@ecommerce/errors';
+import { ValidationError, NotFoundError } from '@ecommerce/errors';
 import type { ProductServiceHandlers } from '@ecommerce/proto-gen';
 import * as products from '../../services/productService';
 import * as stock from '../../services/stockService';
@@ -27,14 +27,14 @@ const parseJson = (text: string): unknown => {
   try {
     return JSON.parse(text || '{}');
   } catch {
-    throw new ApiError(400, 'Invalid JSON');
+    throw new ValidationError('Invalid JSON');
   }
 };
 
 export const productHandlers: ProductServiceHandlers = {
   GetProduct: unary(async (request) => {
     const product = await products.getProductForOrder(request.productId);
-    if (!product) throw new ApiError(404, 'Product not found');
+    if (!product) throw new NotFoundError('Product');
     return toProductProto(product);
   }),
   ReserveStock: unary(async (request) => stock.reserveStock(request.orderId, request.items)),
@@ -54,7 +54,11 @@ export const productHandlers: ProductServiceHandlers = {
       };
     }
     const input = listProductsQuerySchema.safeParse(parsedInput);
-    if (!input.success) throw new ApiError(400, 'Invalid query');
+    if (!input.success)
+      throw new ValidationError(
+        'Invalid query',
+        input.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+      );
     const result = await products.getProducts(input.data);
     return {
       products: result.products.map(toProductProto),
@@ -68,13 +72,21 @@ export const productHandlers: ProductServiceHandlers = {
   CreateProduct: unary(async (request, call) => {
     requireAdmin(call.metadata);
     const input = createProductSchema.safeParse(parseJson(request.dataJson));
-    if (!input.success) throw new ApiError(400, 'Invalid product');
+    if (!input.success)
+      throw new ValidationError(
+        'Invalid product',
+        input.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+      );
     return toProductProto(await products.createProduct(input.data));
   }),
   UpdateProduct: unary(async (request, call) => {
     requireAdmin(call.metadata);
     const input = updateProductSchema.safeParse(parseJson(request.dataJson));
-    if (!input.success) throw new ApiError(400, 'Invalid product');
+    if (!input.success)
+      throw new ValidationError(
+        'Invalid product',
+        input.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
+      );
     return toProductProto(await products.updateProduct(request.productId, input.data));
   }),
   DeleteProduct: unary(async (request, call) => {

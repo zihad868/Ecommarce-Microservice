@@ -28,7 +28,8 @@
     "contracts:check": "node tools/check-contracts.mjs",
     "contracts:lint": "buf lint contracts",
     "contracts:breaking": "buf breaking contracts --against .git#branch=main,subdir=contracts",
-    "check": "npm run contracts:check && npm run lint && npm run typecheck && npm test",
+    "check": "npm run contracts:check && npm run lint && npm run typecheck && npm test && npm run test:tools",
+    "test:tools": "node --test tools/create-topics.test.mjs",
     "dev:gateway": "npm run dev --workspace api-gateway",
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },

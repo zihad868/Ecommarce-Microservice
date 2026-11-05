@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topics-init
+  labels:
+    app: catalog-service
+    job-type: kafka-topics
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: catalog-service
+        job-type: kafka-topics
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: create-topics
+          image: catalog-service:dev
+          command: [node, /app/tools/create-topics.mjs]
+          envFrom:
+            - secretRef:
+                name: catalog-service-secret
+          env:
+            - name: KAFKA_REPLICATION_FACTOR
+              value: '1'
+            - name: KAFKA_TOPIC_PARTITIONS
+              value: '6'
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

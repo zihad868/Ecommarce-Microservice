@@ -1,11 +1,13 @@
 import express from 'express';
-import type { ErrorRequestHandler, Request, RequestHandler } from 'express';
+import type { Request, RequestHandler } from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { Metadata } from '@grpc/grpc-js';
 import { z } from 'zod';
-import { ApiError, grpcToHttp } from '@ecommerce/errors';
+import { ApiError, UnauthenticatedError, ForbiddenError, NotFoundError } from '@ecommerce/errors';
 import { correlationIdMiddleware } from '@ecommerce/observability';
+import type { Logger } from 'pino';
+import { createErrorHandler } from './errorHandler';
 import type { GatewayBackend } from './backend';
 
 const credentialsSchema = z.object({
@@ -13,21 +15,25 @@ const credentialsSchema = z.object({
   password: z.string().min(1).max(1024),
 });
 const idSchema = z.string().min(1).max(128);
+export const rejectRateLimitedRequest: RequestHandler = (_req, _res, next) => {
+  next(new ApiError(429, 'Too many requests'));
+};
 
 export function createApp(
   backend: GatewayBackend,
   options: {
+    logger: Logger;
     limiter?: RequestHandler;
     authLimiter?: RequestHandler;
     ready?: () => Promise<void>;
-  } = {},
+  },
 ): express.Express {
   const app = express();
   app.disable('x-powered-by');
   app.use(helmet(), correlationIdMiddleware, express.json({ limit: '100kb' }));
   const context = (req: Request): Metadata => {
     const metadata = new Metadata();
-    metadata.set('x-correlation-id', String(req.headers['x-correlation-id']));
+    metadata.set('x-correlation-id', req.correlationId);
     const user = req.res?.locals.user as { userId: string; role: string } | undefined;
     if (user) {
       metadata.set('x-user-id', user.userId);
@@ -51,12 +57,24 @@ export function createApp(
   app.use(
     '/api',
     options.limiter ??
-      rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }),
+      rateLimit({
+        windowMs: 60_000,
+        limit: 300,
+        standardHeaders: 'draft-7',
+        legacyHeaders: false,
+        handler: rejectRateLimitedRequest,
+      }),
   );
   app.use(
     '/api/auth',
     options.authLimiter ??
-      rateLimit({ windowMs: 900_000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false }),
+      rateLimit({
+        windowMs: 900_000,
+        limit: 30,
+        standardHeaders: 'draft-7',
+        legacyHeaders: false,
+        handler: rejectRateLimitedRequest,
+      }),
   );
   app.post('/api/auth/register', async (req, res) => {
     res.status(201).json({
@@ -98,9 +116,9 @@ export function createApp(
   });
   const protect: RequestHandler = async (req, res, next) => {
     const match = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
-    if (!match) throw new ApiError(401, 'Bearer token required');
+    if (!match) throw new UnauthenticatedError('Bearer token required');
     const user = await backend.validateToken(match[1], context(req));
-    if (!user.valid || !user.userId) throw new ApiError(401, 'Invalid token');
+    if (!user.valid || !user.userId) throw new UnauthenticatedError('Invalid token');
     res.locals.user = user;
     next();
   };
@@ -172,7 +190,7 @@ export function createApp(
       protect,
       async (req, res) => {
         if ((res.locals.user as { role: string }).role !== 'ADMIN')
-          throw new ApiError(403, 'Administrator required');
+          throw new ForbiddenError('Administrator required');
         const data = await backend.mutateProduct(
           action,
           action === 'create' ? '' : idSchema.parse(req.params.id),
@@ -188,55 +206,22 @@ export function createApp(
     const limit = req.query.limit ? Number(req.query.limit) : 50;
     const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
     const result = await backend.orders(user.userId, { limit, cursor }, context(req));
-    if (!result.success) throw new ApiError(502, 'Order query failed');
     res.json({ success: true, data: result.orders, nextCursor: result.nextCursor });
   });
   app.get('/api/orders/:id', protect, async (req, res) => {
     const user = res.locals.user as { userId: string; role: string };
     const result = await backend.order(idSchema.parse(req.params.id), context(req));
-    if (!result.success || (result.userId !== user.userId && user.role !== 'ADMIN')) {
-      throw new ApiError(404, 'Order not found');
+    if (result.userId !== user.userId && user.role !== 'ADMIN') {
+      throw new NotFoundError('Order');
     }
     res.json({ success: true, data: result });
   });
-  app.use((_req, res) => {
-    res.status(404).json({ success: false, error: 'Route not found' });
+  app.use((req, res) => {
+    res.status(404).json({
+      success: false,
+      error: { code: 'ROUTE_NOT_FOUND', message: 'Route not found', requestId: req.requestId },
+    });
   });
-  const errors: ErrorRequestHandler = (error: unknown, _req, res, _next) => {
-    let code = 500;
-    let message = 'Internal service error';
-    if (error instanceof z.ZodError) {
-      code = 400;
-      message = 'Invalid request';
-    } else if (error instanceof ApiError) {
-      code = error.statusCode;
-      message = error.message;
-    } else if (
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      typeof error.code === 'number'
-    ) {
-      code = grpcToHttp(error.code);
-      message =
-        code === 503
-          ? 'Service unavailable'
-          : code === 504
-            ? 'Service timed out'
-            : code < 500
-              ? 'details' in error && typeof error.details === 'string'
-                ? error.details
-                : 'Request rejected'
-              : message;
-    } else if (error instanceof SyntaxError) {
-      code = 400;
-      message = 'Invalid JSON';
-    } else if (error && typeof error === 'object' && 'status' in error && error.status === 413) {
-      code = 413;
-      message = 'Payload too large';
-    }
-    res.status(code).json({ success: false, error: message });
-  };
-  app.use(errors);
+  app.use(createErrorHandler(options.logger));
   return app;
 }

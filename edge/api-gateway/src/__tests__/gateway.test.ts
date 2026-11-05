@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Metadata, status, Server as GrpcServer, ServerCredentials } from '@grpc/grpc-js';
-import type { AuthServiceHandlers } from '@ecommerce/proto-gen';
-import { loadAuth } from '@ecommerce/proto-gen';
+import type { AuthV2ServiceHandlers } from '@ecommerce/proto-gen';
+import { loadAuthV2 } from '@ecommerce/proto-gen';
 import { createBackend } from '../backend';
 import type { GatewayBackend } from '../backend';
+import { createLogger } from '@ecommerce/observability';
+import { InsufficientStockError, toGrpcError, fromGrpcError, DomainError } from '@ecommerce/errors';
 import { createApp } from '../app';
 
 const servers: Server[] = [];
@@ -41,34 +43,106 @@ function backend(): GatewayBackend {
     refresh: vi.fn(),
     product: vi.fn().mockResolvedValue({ id: 'prod-1', name: 'Product 1', stock: 10 }),
     order: vi.fn().mockResolvedValue({
-      success: true,
       id: 'order-1',
       userId: 'bob',
-      totalAmount: 10,
+      total: { amount_minor: '1000', currency: 'USD' },
+      items: [],
       status: 'PENDING',
-      error: '',
     }),
-    orders: vi.fn().mockResolvedValue({ success: true, orders: [], nextCursor: '', error: '' }),
+    orders: vi.fn().mockResolvedValue({ orders: [], nextCursor: '' }),
   };
 }
 
 async function listen(client: GatewayBackend): Promise<string> {
-  const server = createApp(client).listen(0, '127.0.0.1');
+  const server = createApp(client, {
+    logger: createLogger({ serviceName: 'gateway-test', level: 'silent' }),
+  }).listen(0, '127.0.0.1');
   servers.push(server);
   await new Promise<void>((resolve) => server.once('listening', resolve));
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
 describe('gateway HTTP boundary', () => {
+  it.each([
+    ['/api/auth/login', '{', 'INVALID_JSON'],
+    ['/api/auth/login', '{}', 'VALIDATION_ERROR'],
+    ['/missing', undefined, 'ROUTE_NOT_FOUND'],
+  ])('returns a structured error for %s', async (path, body, code) => {
+    const url = await listen(backend());
+    const response = await fetch(
+      `${url}${path}`,
+      body === undefined
+        ? {}
+        : {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body,
+          },
+    );
+    expect(response.status).toBe(code === 'ROUTE_NOT_FOUND' ? 404 : 400);
+    expect(await response.json()).toMatchObject({
+      success: false,
+      error: { code, requestId: response.headers.get('x-request-id') },
+    });
+  });
+  it('forwards the generated correlation ID when no header is supplied', async () => {
+    const client = backend();
+    const url = await listen(client);
+    const response = await fetch(`${url}/api/products/prod-1`);
+    expect(client.product).toHaveBeenCalled();
+    expect(vi.mocked(client.product).mock.calls[0][1].get('x-correlation-id')).toEqual([
+      response.headers.get('x-correlation-id'),
+    ]);
+    expect(response.headers.get('x-correlation-id')).not.toBe('undefined');
+  });
+  it('preserves stock details through a service hop', async () => {
+    const client = backend();
+    vi.mocked(client.createOrder).mockRejectedValue(
+      toGrpcError(
+        fromGrpcError(
+          toGrpcError(new InsufficientStockError('Insufficient stock', { available: 1 })),
+        ),
+      ),
+    );
+    const url = await listen(client);
+    const response = await fetch(`${url}/api/orders`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer token', 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [{ productId: 'p', quantity: 2 }] }),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'INSUFFICIENT_STOCK', details: { available: 1 } },
+    });
+  });
+  it('sanitizes direct server failures and keeps unexpected SyntaxErrors as 500', async () => {
+    const client = backend();
+    const url = await listen(client);
+    for (const error of [
+      new DomainError('INTERNAL', 'secret', 500, status.INTERNAL, { secret: true }),
+      new SyntaxError('bug'),
+    ]) {
+      vi.mocked(client.product).mockRejectedValue(error);
+      const response = await fetch(`${url}/api/products/prod-1`);
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        success: false,
+        error: {
+          code: 'INTERNAL',
+          message: 'Internal service error',
+          requestId: expect.any(String),
+        },
+      });
+    }
+  });
   it('forwards order creation and the idempotency key with verified identity metadata', async () => {
     const client = backend();
     vi.mocked(client.createOrder).mockResolvedValue({
-      success: true,
       id: 'new',
       userId: 'alice',
-      totalAmount: 10,
+      total: { amount_minor: '1000', currency: 'USD' },
+      items: [],
       status: 'PENDING',
-      error: '',
     });
     const url = await listen(client);
     const response = await fetch(`${url}/api/orders`, {
@@ -103,19 +177,22 @@ describe('gateway HTTP boundary', () => {
     expect(response.status).toBe(422);
     expect(await response.json()).toEqual({
       success: false,
-      error: 'Idempotency key reused with a different request',
+      error: {
+        code: 'UPSTREAM_ERROR',
+        message: 'Idempotency key reused with a different request',
+        requestId: expect.any(String),
+      },
     });
   });
   it('routes browsing and payment through their RPC adapters', async () => {
     const client = backend();
     vi.mocked(client.products).mockResolvedValue({ products: [], page: { total: 0 } });
     vi.mocked(client.payOrder).mockResolvedValue({
-      success: true,
       id: 'order-1',
       userId: 'alice',
-      totalAmount: 10,
+      total: { amount_minor: '1000', currency: 'USD' },
+      items: [],
       status: 'PAID',
-      error: '',
     });
     const url = await listen(client);
     expect((await fetch(`${url}/api/products?limit=5`)).status).toBe(200);
@@ -145,7 +222,10 @@ describe('gateway HTTP boundary', () => {
       headers: { authorization: 'Bearer token' },
     });
     expect(res1.status).toBe(501);
-    expect(await res1.json()).toEqual({ success: false, error: 'Payments are not available yet' });
+    expect(await res1.json()).toEqual({
+      success: false,
+      error: { code: 'HTTP_501', message: 'Internal service error', requestId: expect.any(String) },
+    });
 
     // 2. In production mode even if ENABLE_MOCK_PAYMENTS is true
     process.env.ENABLE_MOCK_PAYMENTS = 'true';
@@ -222,13 +302,16 @@ describe('gateway HTTP boundary', () => {
         body: '{}',
       });
     expect(response?.status).toBe(429);
+    expect(await response?.json()).toMatchObject({
+      error: { code: 'HTTP_429', requestId: response?.headers.get('x-request-id') },
+    });
   });
 });
 
 describe('generated gRPC client integration', () => {
   it('loads versioned contracts and carries credentials and metadata over a real gRPC connection', async () => {
     let correlation: unknown;
-    const handlers: AuthServiceHandlers = {
+    const handlers: AuthV2ServiceHandlers = {
       Logout: (_call, callback) => callback(null, {}),
       GetUser: (_call, callback) => callback({ code: status.UNIMPLEMENTED }),
       Login: (call, callback) => {
@@ -240,10 +323,9 @@ describe('generated gRPC client integration', () => {
       },
       Register: (_call, callback) => callback({ code: status.UNIMPLEMENTED }),
       Refresh: (_call, callback) => callback({ code: status.UNIMPLEMENTED }),
-      ValidateToken: (_call, callback) =>
-        callback(null, { valid: true, userId: 'alice', role: 'USER', error: '' }),
+      ValidateToken: (_call, callback) => callback(null, { userId: 'alice', role: 'USER' }),
     };
-    const definition = loadAuth().auth.v1.AuthService.service;
+    const definition = loadAuthV2().auth.v2.AuthService.service;
     const rpcServer = new GrpcServer();
     rpcServer.addService(definition, handlers);
     const port = await new Promise<number>((resolve, reject) =>

@@ -46,6 +46,21 @@ spec:
         runAsGroup: 1001
         fsGroup: 1001
       automountServiceAccountToken: false
+      initContainers:
+        - name: wait-for-topics
+          image: catalog-service:dev
+          command: [node, /app/tools/create-topics.mjs, --check]
+          envFrom:
+            - secretRef:
+                name: catalog-service-secret
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
       containers:
         - name: catalog-service
           image: catalog-service:dev

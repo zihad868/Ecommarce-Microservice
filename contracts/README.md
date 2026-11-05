@@ -4,6 +4,12 @@
 payloads. Add fields with new numbers, reserve removed numbers/names, and create
 a new version for incompatible changes. Never share service persistence models.
 
+Auth and order v1 contracts remain unchanged. Their services also expose v2:
+auth v2 rejects invalid tokens with gRPC errors, and order v2 returns typed
+orders with enum statuses, Money totals and item prices. Neither v2 contract
+embeds success/error fields. The gateway uses v2; deploy identity/order before
+the gateway. See [gateway API](../docs/API.md) for the HTTP response changes.
+
 ```sh
 npm run contracts:check
 npm run contracts:generate

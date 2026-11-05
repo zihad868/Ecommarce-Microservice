@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { ApiError } from '@ecommerce/errors';
+import { UnauthenticatedError, DependencyUnavailableError } from '@ecommerce/errors';
 import { getMetricsBundle } from '@ecommerce/observability';
 import type { TokenResult } from './backend';
 
@@ -26,7 +26,7 @@ export function localTokenVerifier(
       )
         throw new Error('Invalid claims');
     } catch {
-      throw new ApiError(401, 'Invalid token');
+      throw new UnauthenticatedError('Invalid token');
     }
     let cutoff: string | null = null;
     const key = `auth:revoked-before:${String(payload.id)}`;
@@ -35,12 +35,12 @@ export function localTokenVerifier(
     } catch {
       redisRevocationErrors.inc();
       if (payload.role === 'ADMIN') {
-        throw new ApiError(503, 'Session check unavailable');
+        throw new DependencyUnavailableError('Session check unavailable');
       }
       /* Redis outage degrades to signature and expiry validation for regular users. */
     }
     if (cutoff && Number(payload.issuedAt) <= Number(cutoff))
-      throw new ApiError(401, 'Token revoked');
+      throw new UnauthenticatedError('Token revoked');
     return { valid: true, userId: String(payload.id), role: String(payload.role), error: '' };
   };
 }

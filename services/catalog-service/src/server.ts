@@ -1,6 +1,6 @@
 import { getRedisClient } from './utils/redisClient';
 import { createLogger, initMetrics, operationsServer } from '@ecommerce/observability';
-import { registerGracefulShutdown } from '@ecommerce/grpc-kit';
+import { setGrpcLogger, registerGracefulShutdown } from '@ecommerce/grpc-kit';
 import config from './config';
 import prisma from './utils/prismaClient';
 import { startGrpcServer } from './grpc/productServer';
@@ -9,6 +9,7 @@ import { startOutboxWorker, stopOutboxWorker } from './events/outbox';
 import { startReservationWorker, stopReservationWorker } from './events/reservationWorker';
 
 const logger = createLogger({ serviceName: 'catalog-service' });
+setGrpcLogger(logger);
 initMetrics('catalog-service');
 const start = async () => {
   const grpcServer = await startGrpcServer();

@@ -10,3 +10,4 @@ resources:
   - ../services/api-gateway
   - 11-network-policy.yaml
   - 08-ingress.yaml
+  - 13-kafka-topics-job.yaml

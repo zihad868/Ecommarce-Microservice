@@ -6,12 +6,8 @@ let pg: StartedPostgreSqlContainer | undefined;
 export async function setup() {
   let baseStr = process.env.TEST_DATABASE_URL;
   if (!baseStr) {
-    try {
-      pg = await new PostgreSqlContainer('postgres:15-alpine').start();
-      baseStr = pg.getConnectionUri();
-    } catch {
-      baseStr = 'postgresql://postgres@127.0.0.1:5432/postgres';
-    }
+    pg = await new PostgreSqlContainer('postgres:15-alpine').start();
+    baseStr = pg.getConnectionUri();
   }
   const base = new URL(baseStr);
   for (const service of ['identity', 'catalog', 'order']) {
@@ -32,8 +28,10 @@ export async function setup() {
           stdio: 'inherit',
         },
       );
-    } catch {
-      // Ignore if db is not accessible in local environment
+    } catch (error) {
+      await pg?.stop();
+      pg = undefined;
+      throw error;
     }
   }
 }

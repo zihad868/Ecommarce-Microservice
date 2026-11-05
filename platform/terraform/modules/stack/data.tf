@@ -66,10 +66,22 @@ resource "aws_elasticache_replication_group" "main" {
   subnet_group_name          = aws_elasticache_subnet_group.main.name
   security_group_ids         = [aws_security_group.data["redis"].id]
 }
+resource "aws_msk_configuration" "main" {
+  name              = "${var.name}-events"
+  kafka_versions    = [var.kafka_version]
+  server_properties = <<-PROPERTIES
+    auto.create.topics.enable=false
+  PROPERTIES
+}
+
 resource "aws_msk_cluster" "main" {
   cluster_name           = "${var.name}-events"
   kafka_version          = var.kafka_version
   number_of_broker_nodes = 3
+  configuration_info {
+    arn      = aws_msk_configuration.main.arn
+    revision = aws_msk_configuration.main.latest_revision
+  }
   broker_node_group_info {
     instance_type   = "kafka.m5.large"
     client_subnets  = aws_subnet.private[*].id

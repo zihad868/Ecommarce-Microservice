@@ -1,6 +1,7 @@
 import rateLimit, { type RateLimitRequestHandler } from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
 import type Redis from 'ioredis';
+import type { RequestHandler } from 'express';
 
 export interface RateLimiterOptions {
   redisClient?: Redis;
@@ -8,6 +9,7 @@ export interface RateLimiterOptions {
   max: number;
   message?: string;
   prefix?: string;
+  handler?: RequestHandler;
 }
 
 /**
@@ -31,6 +33,7 @@ export const createRedisRateLimiter = (options: RateLimiterOptions): RateLimitRe
     store: store,
     passOnStoreError: true,
     message: { success: false, message: options.message ?? 'Too many requests' },
+    ...(options.handler ? { handler: options.handler } : {}),
   });
 };
 

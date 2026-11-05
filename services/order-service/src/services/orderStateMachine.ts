@@ -1,5 +1,4 @@
-import httpStatus from 'http-status';
-import { ApiError } from '@ecommerce/errors';
+import { ValidationError } from '@ecommerce/errors';
 import { OrderStatus } from '../utils/prismaClient';
 
 const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
@@ -17,8 +16,7 @@ export const canTransition = (current: OrderStatus, target: OrderStatus): boolea
 
 export const validateTransition = (current: OrderStatus, target: OrderStatus): void => {
   if (!canTransition(current, target)) {
-    throw new ApiError(
-      httpStatus.BAD_REQUEST,
+    throw new ValidationError(
       `Cannot transition order from status '${current}' to '${target}'. Allowed transitions: ${
         VALID_TRANSITIONS[current].join(', ') || 'none'
       }`,

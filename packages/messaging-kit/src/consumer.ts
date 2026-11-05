@@ -4,8 +4,9 @@ export async function sendDlq(
   producer: Producer,
   topic: string,
   message: KafkaMessage,
-  errorReason: string,
+  error: unknown,
 ): Promise<void> {
+  const errorReason = error instanceof Error ? error.message : String(error);
   await producer.send({
     topic: `${topic}.dlq`,
     messages: [
@@ -21,6 +22,7 @@ export async function sendDlq(
           ...message.headers,
           'original-topic': topic,
           'failure-reason': errorReason,
+          'failure-stack': (error instanceof Error ? (error.stack ?? '') : '').slice(0, 4000),
         },
       },
     ],
@@ -31,12 +33,14 @@ export async function withRetry<T>(
   fn: () => Promise<T>,
   maxAttempts = 3,
   baseDelayMs = 100,
+  shouldRetry: (error: unknown) => boolean = () => true,
 ): Promise<T> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (err) {
+      if (!shouldRetry(err)) throw err;
       lastError = err;
       if (attempt < maxAttempts) {
         const delay = baseDelayMs * Math.pow(2, attempt - 1);
@@ -54,6 +58,7 @@ export async function runConsumer<T>(opts: {
   decode: (topic: string, bytes: Buffer) => T;
   handle: (event: T) => Promise<void>;
   maxAttempts?: number;
+  isRetryable?: (error: unknown) => boolean;
 }): Promise<void> {
   await opts.consumer.run({
     eachMessage: async ({ topic, message }) => {
@@ -62,13 +67,13 @@ export async function runConsumer<T>(opts: {
       try {
         event = opts.decode(topic, message.value);
       } catch (e) {
-        await sendDlq(opts.dlq, topic, message, `decode: ${String(e)}`);
+        await sendDlq(opts.dlq, topic, message, e);
         return;
       }
       try {
-        await withRetry(() => opts.handle(event), opts.maxAttempts ?? 3);
+        await withRetry(() => opts.handle(event), opts.maxAttempts ?? 3, 100, opts.isRetryable);
       } catch (e) {
-        await sendDlq(opts.dlq, topic, message, String(e));
+        await sendDlq(opts.dlq, topic, message, e);
       }
     },
   });

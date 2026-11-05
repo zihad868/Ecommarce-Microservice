@@ -1,5 +1,5 @@
 import { createLogger, initMetrics, operationsServer } from '@ecommerce/observability';
-import { registerGracefulShutdown } from '@ecommerce/grpc-kit';
+import { setGrpcLogger, registerGracefulShutdown } from '@ecommerce/grpc-kit';
 import config from './config';
 import prisma from './utils/prismaClient';
 import { startGrpcServer } from './grpc/orderServer';
@@ -7,6 +7,7 @@ import { connectKafkaProducer, disconnectKafkaProducer } from './events/kafka';
 import { startOutboxWorker, stopOutboxWorker } from './events/outbox';
 
 const logger = createLogger({ serviceName: 'order-service' });
+setGrpcLogger(logger);
 initMetrics('order-service');
 const start = async () => {
   const grpcServer = await startGrpcServer();

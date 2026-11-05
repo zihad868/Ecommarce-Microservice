@@ -1,0 +1,44 @@
+syntax = "proto3";
+package order.v2;
+
+import "common/v1/common.proto";
+
+service OrderService {
+  rpc CreateOrder (CreateOrderRequest) returns (Order) {}
+  rpc PayOrder (PayOrderRequest) returns (Order) {}
+  rpc UpdateOrderStatus (UpdateOrderStatusRequest) returns (Order) {}
+  rpc ReconcileReservation (OrderRequest) returns (ReconcileReservationResponse) {}
+  rpc GetOrder (OrderRequest) returns (Order) {}
+  rpc GetOrdersByUser (UserOrdersRequest) returns (UserOrdersResponse) {}
+}
+
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  PENDING = 1;
+  CONFIRMED = 2;
+  PAID = 3;
+  SHIPPED = 4;
+  COMPLETED = 5;
+  CANCELLED = 6;
+}
+
+message Order {
+  string id = 1;
+  string userId = 2;
+  OrderStatus status = 3;
+  common.v1.Money total = 4;
+  repeated OrderItem items = 5;
+}
+message OrderItem {
+  string productId = 1;
+  uint32 quantity = 2;
+  common.v1.Money price = 3;
+}
+message OrderRequest { string orderId = 1; }
+message UserOrdersRequest { string userId = 1; int32 limit = 2; string cursor = 3; }
+message UserOrdersResponse { repeated Order orders = 1; string nextCursor = 2; }
+message OrderItemInput { string productId = 1; uint32 quantity = 2; }
+message CreateOrderRequest { repeated OrderItemInput items = 1; string idempotencyKey = 2; }
+message PayOrderRequest { string orderId = 1; string paymentMethod = 2; }
+message UpdateOrderStatusRequest { string orderId = 1; OrderStatus status = 2; }
+message ReconcileReservationResponse { bool release = 1; bool commit = 2; }

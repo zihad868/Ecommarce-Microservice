@@ -1,8 +1,7 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import * as argon2 from 'argon2';
-import httpStatus from 'http-status';
-import { ApiError } from '@ecommerce/errors';
+import { UnauthenticatedError, AlreadyExistsError } from '@ecommerce/errors';
 import config from '../config';
 import prisma, { Role, type Prisma } from '../utils/prismaClient';
 import { getRedisClient } from '../utils/redisClient';
@@ -69,7 +68,7 @@ export const registerUser = async (input: RegisterInput) => {
 
   const existingUser = await prisma.user.findUnique({ where: { email } });
   if (existingUser) {
-    throw new ApiError(httpStatus.CONFLICT, 'User with this email already exists');
+    throw new AlreadyExistsError('User with this email already exists');
   }
 
   const hashedPassword = await argon2.hash(input.password);
@@ -106,12 +105,12 @@ export const loginUser = async (emailInput: string, passwordInput: string) => {
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
-    throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid credentials');
+    throw new UnauthenticatedError('Invalid credentials');
   }
 
   const isPasswordValid = await argon2.verify(user.password, passwordInput);
   if (!isPasswordValid) {
-    throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid credentials');
+    throw new UnauthenticatedError('Invalid credentials');
   }
 
   const tokens = await generateTokens(user.id, user.email, user.role);
@@ -144,7 +143,7 @@ export const refreshTokens = async (rawRefreshToken: string): Promise<AuthTokens
   const hashedToken = hashToken(rawRefreshToken);
   const result = await prisma.$transaction(async (tx) => {
     const initial = await tx.refreshToken.findUnique({ where: { hashedToken } });
-    if (!initial) throw new ApiError(401, 'Invalid refresh token');
+    if (!initial) throw new UnauthenticatedError('Invalid refresh token');
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${initial.userId}, 2))`;
     const record = await tx.refreshToken.findUniqueOrThrow({
       where: { hashedToken },
@@ -157,26 +156,26 @@ export const refreshTokens = async (rawRefreshToken: string): Promise<AuthTokens
       });
       return { reusedUserId: record.userId };
     }
-    if (record.expiresAt <= new Date()) throw new ApiError(401, 'Refresh token has expired');
+    if (record.expiresAt <= new Date()) throw new UnauthenticatedError('Refresh token has expired');
     const { count } = await tx.refreshToken.updateMany({
       where: { id: record.id, revoked: false },
       data: { revoked: true },
     });
-    if (!count) throw new ApiError(401, 'Refresh token already used');
+    if (!count) throw new UnauthenticatedError('Refresh token already used');
     return {
       tokens: await generateTokens(record.user.id, record.user.email, record.user.role, tx),
     };
   });
   if (result.reusedUserId) {
     await revokeUserAccess(result.reusedUserId);
-    throw new ApiError(401, 'Refresh token reuse detected. All sessions revoked.');
+    throw new UnauthenticatedError('Refresh token reuse detected. All sessions revoked.');
   }
-  if (!result.tokens) throw new ApiError(401, 'Invalid refresh token');
+  if (!result.tokens) throw new UnauthenticatedError('Invalid refresh token');
   return result.tokens;
 };
 
 export const logoutUser = async (_rawRefreshToken?: string, userId?: string) => {
-  if (!userId) throw new ApiError(401, 'Authenticated user required');
+  if (!userId) throw new UnauthenticatedError('Authenticated user required');
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${userId}, 2))`;
     await tx.refreshToken.updateMany({ where: { userId }, data: { revoked: true } });

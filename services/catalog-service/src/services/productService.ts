@@ -1,6 +1,5 @@
 import { createLogger } from '@ecommerce/observability';
-import httpStatus from 'http-status';
-import { ApiError } from '@ecommerce/errors';
+import { ValidationError, NotFoundError, InsufficientStockError } from '@ecommerce/errors';
 import prisma, { Prisma, type Product } from '../utils/prismaClient';
 import { getRedisClient } from '../utils/redisClient';
 import type {
@@ -170,7 +169,7 @@ export const getProductById = async (id: string): Promise<Product | null> => {
 export const updateProduct = async (id: string, data: UpdateProductInput): Promise<Product> => {
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) {
-    throw new ApiError(httpStatus.NOT_FOUND, 'Product not found');
+    throw new NotFoundError('Product');
   }
 
   const updateData: Prisma.ProductUpdateInput = {};
@@ -195,7 +194,7 @@ export const updateProduct = async (id: string, data: UpdateProductInput): Promi
 export const deleteProduct = async (id: string): Promise<void> => {
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) {
-    throw new ApiError(httpStatus.NOT_FOUND, 'Product not found');
+    throw new NotFoundError('Product');
   }
 
   await prisma.product.delete({ where: { id } });
@@ -212,7 +211,7 @@ export const decrementProductStockTx = async (
   quantity: number,
 ): Promise<void> => {
   if (quantity <= 0) {
-    throw new ApiError(httpStatus.BAD_REQUEST, 'Quantity must be positive');
+    throw new ValidationError('Quantity must be positive');
   }
 
   const updatedCount = await tx.$executeRaw`
@@ -224,12 +223,13 @@ export const decrementProductStockTx = async (
   if (updatedCount === 0) {
     const current = await tx.product.findUnique({ where: { id: productId } });
     if (!current) {
-      throw new ApiError(httpStatus.NOT_FOUND, `Product ${productId} not found`);
+      throw new NotFoundError('Product');
     }
-    throw new ApiError(
-      httpStatus.CONFLICT,
-      `Insufficient stock for product ${current.name}. Available: ${String(current.stock)}, requested: ${String(quantity)}`,
-    );
+    throw new InsufficientStockError('Insufficient stock', {
+      productId,
+      available: current.stock,
+      requested: quantity,
+    });
   }
 };
 

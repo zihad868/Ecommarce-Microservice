@@ -1,6 +1,7 @@
 import { loadProduct } from '@ecommerce/proto-gen';
 import config from '../config';
-import { ApiError, grpcToHttp } from '@ecommerce/errors';
+import type { ServiceError } from '@grpc/grpc-js';
+import { fromGrpcError } from '@ecommerce/errors';
 import { invokeResilientGrpc, getClientCredentials } from '@ecommerce/grpc-kit';
 
 const productProto = loadProduct();
@@ -61,8 +62,7 @@ export const reserveStock = async (
     );
   } catch (err: unknown) {
     if (err && typeof err === 'object' && 'code' in err && typeof err.code === 'number') {
-      const grpcErr = err as { code: number; details?: string; message: string };
-      throw new ApiError(grpcToHttp(grpcErr.code), grpcErr.details ?? grpcErr.message);
+      throw fromGrpcError(err as ServiceError);
     }
     throw err;
   }
@@ -81,8 +81,7 @@ export const releaseStockRemote = async (orderId: string, timeoutMs = 10_000): P
     );
   } catch (err: unknown) {
     if (err && typeof err === 'object' && 'code' in err && typeof err.code === 'number') {
-      const grpcErr = err as { code: number; details?: string; message: string };
-      throw new ApiError(grpcToHttp(grpcErr.code), grpcErr.details ?? grpcErr.message);
+      throw fromGrpcError(err as ServiceError);
     }
     throw err;
   }

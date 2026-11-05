@@ -1,6 +1,7 @@
 import { getClientCredentials } from '@ecommerce/grpc-kit';
 import type { Client, ServiceError, Metadata } from '@grpc/grpc-js';
-import { loadAuth, loadProduct, loadOrder } from '@ecommerce/proto-gen';
+import { loadAuthV2, loadProduct, loadOrderV2 } from '@ecommerce/proto-gen';
+import type { OrderV2Status } from '@ecommerce/proto-gen';
 
 export interface TokenResult {
   valid: boolean;
@@ -26,12 +27,11 @@ export interface PageInfo {
   nextCursor?: string;
 }
 export interface OrderResult {
-  success: boolean;
   id: string;
   userId: string;
-  totalAmount: number;
+  total: Money | null;
+  items: { productId: string; quantity: number; price: Money | null }[];
   status: string;
-  error: string;
 }
 export interface SessionResult {
   user: { id: string; email: string; role: string } | null;
@@ -55,7 +55,12 @@ export interface GatewayBackend {
     context: Metadata,
   ): Promise<OrderResult>;
   payOrder(this: void, orderId: string, method: string, context: Metadata): Promise<OrderResult>;
-  updateOrder(this: void, orderId: string, status: string, context: Metadata): Promise<OrderResult>;
+  updateOrder(
+    this: void,
+    orderId: string,
+    status: OrderV2Status,
+    context: Metadata,
+  ): Promise<OrderResult>;
   products(
     this: void,
     query: { category?: string; search?: string; limit?: number; cursor?: string } | string,
@@ -80,7 +85,7 @@ export interface GatewayBackend {
     userId: string,
     pagination: { limit?: number; cursor?: string } | undefined,
     context: Metadata,
-  ): Promise<{ success: boolean; orders: OrderResult[]; nextCursor?: string; error: string }>;
+  ): Promise<{ orders: OrderResult[]; nextCursor?: string }>;
 }
 
 export function createBackend(options: {
@@ -90,12 +95,12 @@ export function createBackend(options: {
   timeoutMs?: number;
   verifyToken?: (token: string) => Promise<TokenResult>;
 }): GatewayBackend & { close(): void; ready(): Promise<void> } {
-  const auth = new (loadAuth().auth.v1.AuthService)(options.identity, getClientCredentials());
+  const auth = new (loadAuthV2().auth.v2.AuthService)(options.identity, getClientCredentials());
   const product = new (loadProduct().product.v1.ProductService)(
     options.catalog,
     getClientCredentials(),
   );
-  const order = new (loadOrder().order.v1.OrderService)(options.order, getClientCredentials());
+  const order = new (loadOrderV2().order.v2.OrderService)(options.order, getClientCredentials());
   const clients: Client[] = [auth, product, order];
   const deadline = () => new Date(Date.now() + (options.timeoutMs ?? 3000));
   function call<T>(

@@ -1,7 +1,13 @@
 import { createHash } from 'node:crypto';
-import httpStatus from 'http-status';
 import { v4 as uuidv4 } from 'uuid';
-import { ApiError } from '@ecommerce/errors';
+import {
+  ValidationError,
+  ForbiddenError,
+  NotFoundError,
+  IdempotencyConflictError,
+  ConcurrentModificationError,
+  DependencyUnavailableError,
+} from '@ecommerce/errors';
 import { type OrderCreatedEvent, type OrderItemEvent } from '@ecommerce/messaging-kit';
 import prisma, { OrderStatus, Prisma, type Order } from '../utils/prismaClient';
 import config from '../config';
@@ -24,8 +30,7 @@ export const createOrder = async (
     .update(JSON.stringify([...items].sort((a, b) => a.productId.localeCompare(b.productId))))
     .digest('hex');
   const replay = (record: { requestHash: string; response: Prisma.JsonValue }): Order => {
-    if (record.requestHash !== requestHash)
-      throw new ApiError(422, 'Idempotency key reused with a different request');
+    if (record.requestHash !== requestHash) throw new IdempotencyConflictError();
     return mapOrderResponse(record.response as unknown as Order);
   };
   // 1. Idempotency Key check — scoped to userId to prevent cross-user leakage
@@ -58,10 +63,14 @@ export const createOrder = async (
           ? grpcErr.code
           : undefined;
       if (code === 5) {
-        throw new ApiError(httpStatus.BAD_REQUEST, `Product ${item.productId} not found`);
+        throw new ValidationError(`Product ${item.productId} not found`);
       }
       const msg = grpcErr instanceof Error ? grpcErr.message : String(grpcErr);
-      throw new ApiError(httpStatus.SERVICE_UNAVAILABLE, `Product Service unavailable: ${msg}`);
+      logger.error(
+        { err: grpcErr, msg, productId: item.productId },
+        'Product service request failed',
+      );
+      throw new DependencyUnavailableError();
     }
 
     const rawPrice =
@@ -269,14 +278,11 @@ export const getOrderById = async (
   });
 
   if (!order) {
-    throw new ApiError(httpStatus.NOT_FOUND, 'Order not found');
+    throw new NotFoundError('Order');
   }
 
   if (userRole !== 'ADMIN' && order.userId !== userId) {
-    throw new ApiError(
-      httpStatus.FORBIDDEN,
-      'Forbidden: You are not authorized to view this order',
-    );
+    throw new ForbiddenError('Forbidden: You are not authorized to view this order');
   }
 
   return order;
@@ -299,10 +305,7 @@ export const updateOrderStatus = async (
     const allowedFromStatuses: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED];
 
     if (!allowedForUser.includes(targetStatus) || !allowedFromStatuses.includes(order.status)) {
-      throw new ApiError(
-        httpStatus.FORBIDDEN,
-        'Forbidden: Only ADMIN can perform this status transition.',
-      );
+      throw new ForbiddenError('Forbidden: Only ADMIN can perform this status transition.');
     }
   }
 
@@ -313,7 +316,7 @@ export const updateOrderStatus = async (
       where: { id: orderId, status: order.status },
       data: { status: targetStatus },
     });
-    if (count === 0) throw new ApiError(httpStatus.CONFLICT, 'Order changed, please retry');
+    if (count === 0) throw new ConcurrentModificationError();
     if (targetStatus === OrderStatus.CANCELLED) await enqueueStockRelease(tx, orderId);
     return tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true } });
   });
@@ -332,13 +335,12 @@ export const payOrder = async (
   userRole: string,
   input: PayOrderInput,
 ): Promise<Order> => {
-  if (config.NODE_ENV === 'production') throw new ApiError(403, 'Mock payment disabled');
+  if (config.NODE_ENV === 'production') throw new ForbiddenError('Mock payment disabled');
 
   const order = await getOrderById(orderId, userId, userRole);
 
   if (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.CONFIRMED) {
-    throw new ApiError(
-      httpStatus.BAD_REQUEST,
+    throw new ValidationError(
       `Cannot pay for order with status '${order.status}'. Order must be PENDING or CONFIRMED.`,
     );
   }
@@ -356,7 +358,7 @@ export const payOrder = async (
         where: { id: orderId, status: currentStatus },
         data: { status: OrderStatus.CONFIRMED },
       });
-      if (count === 0) throw new ApiError(httpStatus.CONFLICT, 'Order changed, please retry');
+      if (count === 0) throw new ConcurrentModificationError();
       currentStatus = OrderStatus.CONFIRMED;
     }
     validateTransition(currentStatus, OrderStatus.PAID);
@@ -364,7 +366,7 @@ export const payOrder = async (
       where: { id: orderId, status: currentStatus },
       data: { status: OrderStatus.PAID },
     });
-    if (count === 0) throw new ApiError(httpStatus.CONFLICT, 'Order changed, please retry');
+    if (count === 0) throw new ConcurrentModificationError();
     return tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true } });
   });
 

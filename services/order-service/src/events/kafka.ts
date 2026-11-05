@@ -1,3 +1,4 @@
+import { normalizeError, ValidationError } from '@ecommerce/errors';
 import { type Producer, type Consumer, Partitioners } from 'kafkajs';
 import {
   createKafka,
@@ -36,11 +37,15 @@ export const connectKafkaProducer = async (): Promise<void> => {
     });
     await runConsumer({
       consumer,
+      isRetryable: (error) => {
+        const known = normalizeError(error);
+        return !known || known.statusCode >= 500;
+      },
       dlq: producer,
       topics: [TOPICS.stockReservationFailed],
       decode: (_topic, bytes) => decodeStockReservationFailed(bytes),
       handle: async (event) => {
-        if (!event.orderId) throw new Error('Missing order ID');
+        if (!event.orderId) throw new ValidationError('Missing order ID');
         await cancelOrderForStockFailure(event.orderId);
       },
     });

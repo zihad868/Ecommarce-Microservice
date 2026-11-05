@@ -8,6 +8,45 @@ resources:
   - service-accounts.yaml
 patches:
   - target:
+      kind: Job
+      name: kafka-topics-init
+    patch: |
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: kafka-topics-init
+      spec:
+        template:
+          spec:
+            serviceAccountName: catalog-service
+            containers:
+              - name: create-topics
+                env:
+                  - name: KAFKA_MSK_IAM
+                    value: "true"
+                  - name: AWS_REGION
+                    value: ap-southeast-1
+                  - name: KAFKA_REPLICATION_FACTOR
+                    value: "3"
+  - target:
+      kind: Deployment
+      name: (catalog-service|order-service)
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: unused
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: wait-for-topics
+                env:
+                  - name: KAFKA_MSK_IAM
+                    value: "true"
+                  - name: AWS_REGION
+                    value: ap-southeast-1
+  - target:
       kind: Deployment
       name: identity-service
     patch: |-

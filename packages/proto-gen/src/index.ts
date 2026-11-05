@@ -5,6 +5,16 @@ import * as grpc from '@grpc/grpc-js';
 import type { ProtoGrpcType as AuthProto } from './generated/auth';
 import type { ProtoGrpcType as ProductProto } from './generated/product';
 import type { ProtoGrpcType as OrderProto } from './generated/order';
+import type { ProtoGrpcType as AuthV2Proto } from './generated/auth_v2';
+import type { ProtoGrpcType as OrderV2Proto } from './generated/order_v2';
+
+export type { AuthServiceHandlers as AuthV2ServiceHandlers } from './generated/auth/v2/AuthService';
+export type { OrderServiceHandlers as OrderV2ServiceHandlers } from './generated/order/v2/OrderService';
+export type { OrderStatus as OrderV2Status } from './generated/order/v2/OrderStatus';
+export const loadAuthV2 = (): AuthV2Proto =>
+  loadProto('auth/v2/auth_v2.proto') as unknown as AuthV2Proto;
+export const loadOrderV2 = (): OrderV2Proto =>
+  loadProto('order/v2/order_v2.proto') as unknown as OrderV2Proto;
 
 export type { AuthServiceClient, AuthServiceHandlers } from './generated/auth/v1/AuthService';
 export type {

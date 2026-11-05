@@ -17,6 +17,7 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     healthcheck:
       test:
@@ -30,6 +31,21 @@ services:
       start_period: 30s
     volumes:
       - kafka_data:/var/lib/kafka/data
+  kafka-topics-init:
+    build:
+      context: .
+      dockerfile: platform/docker/Dockerfile
+      args:
+        WORKSPACE: catalog-service
+    entrypoint: [node, /app/tools/create-topics.mjs]
+    environment:
+      KAFKA_BROKER: kafka:9092
+      KAFKA_REPLICATION_FACTOR: 1
+      KAFKA_TOPIC_PARTITIONS: 6
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: 'no'
   redis:
     image: redis:7-alpine
     ports:
@@ -162,8 +178,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
       identity-service:
         condition: service_healthy
     command:
@@ -203,8 +219,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
       identity-service:
         condition: service_healthy
       catalog-service:

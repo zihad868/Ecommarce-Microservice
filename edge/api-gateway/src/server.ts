@@ -9,7 +9,7 @@ import {
   metricsHandler,
   metricsMiddleware,
 } from '@ecommerce/observability';
-import { createApp } from './app';
+import { createApp, rejectRateLimitedRequest } from './app';
 import { createBackend } from './backend';
 import express from 'express';
 
@@ -46,6 +46,7 @@ const app = express();
 app.use(metricsMiddleware());
 app.use(
   createApp(backend, {
+    logger,
     ready: async () => {
       await backend.ready();
     },
@@ -54,12 +55,14 @@ app.use(
       windowMs: 60_000,
       max: env.GATEWAY_REQUEST_LIMIT,
       prefix: 'rl:gateway:',
+      handler: rejectRateLimitedRequest,
     }),
     authLimiter: createRedisRateLimiter({
       redisClient: redis,
       windowMs: 900_000,
       max: env.AUTH_REQUEST_LIMIT,
       prefix: 'rl:gateway:auth:',
+      handler: rejectRateLimitedRequest,
     }),
   }),
 );

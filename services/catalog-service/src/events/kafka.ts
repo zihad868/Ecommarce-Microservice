@@ -1,3 +1,4 @@
+import { normalizeError, ValidationError } from '@ecommerce/errors';
 import { type Consumer, type Producer } from 'kafkajs';
 import {
   decodeOrderCreated,
@@ -99,6 +100,10 @@ export const connectKafkaConsumer = async (): Promise<void> => {
 
     await runConsumer<CatalogInboundEvent>({
       consumer,
+      isRetryable: (error) => {
+        const known = normalizeError(error);
+        return !known || known.statusCode >= 500;
+      },
       dlq: producer,
       topics: [TOPICS.orderCreated, TOPICS.stockReleaseRequested],
       decode: (topic, bytes) => {
@@ -112,7 +117,7 @@ export const connectKafkaConsumer = async (): Promise<void> => {
       },
       handle: async (event) => {
         if (event.kind === 'stockReleaseRequested') {
-          if (!event.data.orderId) throw new Error('Missing order ID');
+          if (!event.data.orderId) throw new ValidationError('Missing order ID');
           await releaseStock(event.data.orderId);
           return;
         }
