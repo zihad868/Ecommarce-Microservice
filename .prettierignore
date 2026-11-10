@@ -1,11 +1,7 @@
 node_modules
 dist
 coverage
-.prisma
+.turbo
+packages/proto-gen
+*.lock
 package-lock.json
-*.log
-
-**/src/generated/**
-docs/legacy/**
-.turbo/
-platform/k8s/01-secrets.yaml

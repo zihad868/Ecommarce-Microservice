@@ -14,7 +14,8 @@ build/
 .env.*
 
 # VS Code settings
-.vscode/
+.vscode/*
+!.vscode/settings.json
 
 # OS files
 .DS_Store

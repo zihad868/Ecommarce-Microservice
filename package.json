@@ -14,8 +14,8 @@
     "typecheck": "turbo run typecheck",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "format": "prettier --write \"**/*.{ts,json,md,yml,yaml}\"",
-    "format:check": "prettier --check \"**/*.{ts,json,md,yml,yaml}\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "db:generate": "npm run db:generate --workspace identity-service --workspace catalog-service --workspace order-service",
     "db:migrate": "npm run db:migrate --workspace identity-service --workspace catalog-service --workspace order-service",
     "docker:up": "docker compose up --build",
@@ -38,21 +38,21 @@
     "@typescript-eslint/eslint-plugin": "^8.19.1",
     "@typescript-eslint/parser": "^8.19.1",
     "eslint": "^9.18.0",
-    "eslint-config-prettier": "^9.1.0",
+    "eslint-config-prettier": "^9.1.2",
     "husky": "^9.1.7",
-    "lint-staged": "^15.3.0",
-    "prettier": "^3.4.2",
+    "lint-staged": "^15.5.2",
+    "prettier": "^3.9.10",
     "turbo": "^2.5.0",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.71.0"
   },
   "lint-staged": {
-    "*.ts": [
-      "npm exec -- eslint --fix",
-      "npm exec -- prettier --write"
+    "*.{ts,js,mjs}": [
+      "eslint --fix",
+      "prettier --write"
     ],
     "*.{json,md,yml,yaml}": [
-      "npm exec -- prettier --write"
+      "prettier --write"
     ]
   },
   "engines": {
