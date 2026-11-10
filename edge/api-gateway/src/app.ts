@@ -29,23 +29,32 @@ export function createApp(
   },
 ): express.Express {
   const app = express();
+
   app.disable('x-powered-by');
+
   app.use(helmet(), correlationIdMiddleware, express.json({ limit: '100kb' }));
+
   const context = (req: Request): Metadata => {
     const metadata = new Metadata();
     metadata.set('x-correlation-id', req.correlationId);
+
     const user = req.res?.locals.user as { userId: string; role: string } | undefined;
+
     if (user) {
       metadata.set('x-user-id', user.userId);
       metadata.set('x-user-role', user.role);
     }
+
     if (req.headers['idempotency-key'])
       metadata.set('idempotency-key', String(req.headers['idempotency-key']));
+
     return metadata;
   };
+
   app.get('/health/live', (_req, res) => {
     res.json({ status: 'UP' });
   });
+
   app.get('/health/ready', async (_req, res) => {
     try {
       await options.ready?.();
@@ -54,6 +63,7 @@ export function createApp(
       res.status(503).json({ status: 'NOT_READY' });
     }
   });
+
   app.use(
     '/api',
     options.limiter ??
@@ -65,6 +75,7 @@ export function createApp(
         handler: rejectRateLimitedRequest,
       }),
   );
+
   app.use(
     '/api/auth',
     options.authLimiter ??
@@ -76,24 +87,28 @@ export function createApp(
         handler: rejectRateLimitedRequest,
       }),
   );
+
   app.post('/api/auth/register', async (req, res) => {
     res.status(201).json({
       success: true,
       data: await backend.register(credentialsSchema.parse(req.body), context(req)),
     });
   });
+
   app.post('/api/auth/login', async (req, res) => {
     res.json({
       success: true,
       data: await backend.login(credentialsSchema.parse(req.body), context(req)),
     });
   });
+
   app.post('/api/auth/refresh', async (req, res) => {
     const { refreshToken } = z
       .object({ refreshToken: z.string().min(1).max(1024) })
       .parse(req.body);
     res.json({ success: true, data: await backend.refresh(refreshToken, context(req)) });
   });
+
   const listProductsQuerySchema = z.object({
     category: z.string().trim().optional(),
     search: z.string().trim().optional(),
@@ -110,10 +125,12 @@ export function createApp(
       meta: result.page ?? (result.metaJson ? JSON.parse(result.metaJson) : undefined),
     });
   });
+
   app.get('/api/products/:id', async (req, res) => {
     const result = await backend.product(idSchema.parse(req.params.id), context(req));
     res.json({ success: true, data: result });
   });
+
   const protect: RequestHandler = async (req, res, next) => {
     const match = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
     if (!match) throw new UnauthenticatedError('Bearer token required');
@@ -125,11 +142,13 @@ export function createApp(
   app.get('/api/auth/me', protect, async (req, res) => {
     res.json({ success: true, data: await backend.me(context(req)) });
   });
+
   app.post('/api/auth/logout', protect, async (req, res) => {
     const input = z.object({ refreshToken: z.string().max(1024).optional() }).parse(req.body ?? {});
     await backend.logout(input.refreshToken ?? '', context(req));
     res.json({ success: true });
   });
+
   app.post('/api/orders', protect, async (req, res) => {
     const input = z
       .object({
@@ -147,6 +166,7 @@ export function createApp(
       .status(201)
       .json({ success: true, data: await backend.createOrder(input.items, key, context(req)) });
   });
+
   app.patch('/api/orders/:id/status', protect, async (req, res) => {
     const input = z
       .object({
@@ -158,6 +178,7 @@ export function createApp(
       data: await backend.updateOrder(idSchema.parse(req.params.id), input.status, context(req)),
     });
   });
+
   for (const action of ['create', 'update', 'delete'] as const) {
     const method = action === 'create' ? 'post' : action === 'update' ? 'patch' : 'delete';
     app[method](
@@ -176,6 +197,7 @@ export function createApp(
       },
     );
   }
+
   app.get('/api/orders', protect, async (req, res) => {
     const user = res.locals.user as { userId: string };
     const limit = req.query.limit ? Number(req.query.limit) : 50;
@@ -183,6 +205,7 @@ export function createApp(
     const result = await backend.orders(user.userId, { limit, cursor }, context(req));
     res.json({ success: true, data: result.orders, nextCursor: result.nextCursor });
   });
+
   app.get('/api/orders/:id', protect, async (req, res) => {
     const user = res.locals.user as { userId: string; role: string };
     const result = await backend.order(idSchema.parse(req.params.id), context(req));
@@ -191,12 +214,15 @@ export function createApp(
     }
     res.json({ success: true, data: result });
   });
+
   app.use((req, res) => {
     res.status(404).json({
       success: false,
       error: { code: 'ROUTE_NOT_FOUND', message: 'Route not found', requestId: req.requestId },
     });
   });
+
   app.use(createErrorHandler(options.logger));
+
   return app;
 }
