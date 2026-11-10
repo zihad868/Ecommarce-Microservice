@@ -59,14 +59,14 @@ app.use(
     },
     limiter: createRedisRateLimiter({
       redisClient: redis,
-      windowMs: 60_000,
+      windowMs: 60_000, // 1 minute
       max: env.GATEWAY_REQUEST_LIMIT,
       prefix: 'rl:gateway:',
       handler: rejectRateLimitedRequest,
     }),
     authLimiter: createRedisRateLimiter({
       redisClient: redis,
-      windowMs: 900_000,
+      windowMs: 900_000, // 15 minutes
       max: env.AUTH_REQUEST_LIMIT,
       prefix: 'rl:gateway:auth:',
       handler: rejectRateLimitedRequest,
