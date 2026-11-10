@@ -1,4 +1,5 @@
 # 🚀 Kubernetes (K8s) — সম্পূর্ণ বাংলা গাইড
+
 ### আপনার Ecommerce Microservice প্রজেক্টের k8s ফোল্ডার বিস্তারিত ব্যাখ্যা
 
 ---
@@ -8,6 +9,7 @@
 **Kubernetes (K8s)** হলো একটি **Container Orchestration** সিস্টেম।
 
 **সহজ উদাহরণ:**
+
 - ধরুন আপনার কাছে ১০টি Docker Container আছে।
 - এগুলো চালানো, restart করা, scale করা — সব ম্যানুয়ালি করলে অনেক ঝামেলা।
 - Kubernetes এই সব কাজ **automatically** করে দেয়।
@@ -68,22 +70,23 @@ metadata:
 kind: Secret
 type: Opaque
 stringData:
-  DATABASE_URL: "postgresql://auth_user:PASSWORD@auth-db-service:5432/auth_db"
-  JWT_SECRET: "YOUR_SECRET_KEY"
+  DATABASE_URL: 'postgresql://auth_user:PASSWORD@auth-db-service:5432/auth_db'
+  JWT_SECRET: 'YOUR_SECRET_KEY'
 ```
 
 **কী কাজ করে?**
 পাসওয়ার্ড, API key, JWT token — এসব sensitive data Secret-এ রাখা হয়। Kubernetes এগুলো encrypted রাখে এবং pod-এ environment variable হিসেবে inject করে।
 
 **আপনার প্রজেক্টে ৬টি Secret আছে:**
-| Secret নাম | কার জন্য |
-|---|---|
-| `auth-service-secret` | Auth service এর DB URL, JWT key |
+
+| Secret নাম               | কার জন্য                         |
+| ------------------------ | -------------------------------- |
+| `auth-service-secret`    | Auth service এর DB URL, JWT key  |
 | `product-service-secret` | Product service এর DB URL, Kafka |
-| `order-service-secret` | Order service এর DB URL, Kafka |
-| `auth-db-secret` | Auth PostgreSQL এর password |
-| `product-db-secret` | Product PostgreSQL এর password |
-| `order-db-secret` | Order PostgreSQL এর password |
+| `order-service-secret`   | Order service এর DB URL, Kafka   |
+| `auth-db-secret`         | Auth PostgreSQL এর password      |
+| `product-db-secret`      | Product PostgreSQL এর password   |
+| `order-db-secret`        | Order PostgreSQL এর password     |
 
 > ⚠️ **সতর্কতা:** এই ফাইল কখনো GitHub-এ push করবেন না!
 
@@ -104,25 +107,29 @@ Pod = Docker Container এর wrapper
 আপনার প্রজেক্টে দুটো ধরন ব্যবহার হয়েছে:
 
 #### **Deployment** (stateless apps — Services এর জন্য)
+
 ```yaml
 # 05-auth-service.yaml
 kind: Deployment
 spec:
-  replicas: 2  # ২টি copy চলবে
+  replicas: 2 # ২টি copy চলবে
   strategy:
-    type: RollingUpdate  # নতুন version deploy করার সময় zero downtime
+    type: RollingUpdate # নতুন version deploy করার সময় zero downtime
 ```
+
 - Auth Service, Product Service, Order Service → **Deployment**
 - কারণ: এই services stateless (data নিজে রাখে না, DB-তে রাখে)
 - যেকোনো সময় restart বা replace করা যায়
 
 #### **StatefulSet** (stateful apps — Database/Redis/Kafka এর জন্য)
+
 ```yaml
 # 02-redis.yaml, 03-kafka.yaml, 04-databases.yaml
 kind: StatefulSet
 spec:
   replicas: 1
 ```
+
 - Redis, Kafka, PostgreSQL → **StatefulSet**
 - কারণ: এদের **data আছে** (disk-এ data থাকে)
 - একটা নির্দিষ্ট নাম পায় (`redis-0`, `kafka-0`)
@@ -137,19 +144,23 @@ Pod-এর IP address প্রতিবার restart-এ বদলায়।
 **আপনার প্রজেক্টে ৩ ধরনের Service:**
 
 #### ClusterIP (সবচেয়ে বেশি ব্যবহার)
+
 ```yaml
 type: ClusterIP
 # শুধু Kubernetes cluster-এর ভেতর থেকে access করা যায়
 ```
+
 - `redis-service:6379` → Redis-এ connect
 - `kafka-service:9092` → Kafka-তে connect
 - `auth-service:50051` → Auth gRPC-তে connect
 
 #### Headless Service (StatefulSet এর জন্য)
+
 ```yaml
 spec:
-  clusterIP: None  # Headless!
+  clusterIP: None # Headless!
 ```
+
 - StatefulSet-এর প্রতিটা pod-এর আলাদা DNS দেয়
 - `kafka-0.kafka-headless.ecommerce.svc.cluster.local`
 
@@ -161,14 +172,15 @@ spec:
 # 05-auth-service.yaml
 kind: HorizontalPodAutoscaler
 spec:
-  minReplicas: 2   # সর্বনিম্ন ২টি pod
-  maxReplicas: 8   # সর্বোচ্চ ৮টি pod
+  minReplicas: 2 # সর্বনিম্ন ২টি pod
+  maxReplicas: 8 # সর্বোচ্চ ৮টি pod
   metrics:
-    - cpu: 70%     # CPU 70% হলে নতুন pod তৈরি
-    - memory: 80%  # Memory 80% হলে নতুন pod তৈরি
+    - cpu: 70% # CPU 70% হলে নতুন pod তৈরি
+    - memory: 80% # Memory 80% হলে নতুন pod তৈরি
 ```
 
 **কীভাবে কাজ করে?**
+
 ```
 Traffic কম  → 2 pods চলে
 Traffic বাড়লে → CPU বাড়ে → HPA নতুন pod তৈরি করে → max 8 pods
@@ -187,7 +199,7 @@ startupProbe:
   httpGet:
     path: /health
     port: 3001
-  failureThreshold: 15  # 15 × 5s = 75s
+  failureThreshold: 15 # 15 × 5s = 75s
 
 # livenessProbe: App জীবিত আছে? — fail হলে restart
 livenessProbe:
@@ -203,6 +215,7 @@ readinessProbe:
 ```
 
 **Flow:**
+
 ```
 App start → startupProbe pass → livenessProbe + readinessProbe শুরু
 readinessProbe pass → Service traffic পাঠানো শুরু
@@ -227,12 +240,14 @@ spec:
 ```
 
 **মানে:**
+
 ```
 Internet → api.yourdomain.com/api/auth → auth-service pod
 Internet → api.yourdomain.com/api/products → product-service pod
 ```
 
 **Ingress-এ Security Features:**
+
 - Rate Limiting: Auth তে 20 req/s, Product তে 300 req/s
 - HTTPS enforce (HTTP → HTTPS redirect)
 - CORS headers
@@ -249,7 +264,7 @@ kind: NetworkPolicy
 metadata:
   name: default-deny-all
 spec:
-  podSelector: {}   # সব pods
+  podSelector: {} # সব pods
   policyTypes:
     - Ingress
     - Egress
@@ -277,17 +292,18 @@ Redis পারবে:
 # 12-db-migration-job.yaml
 kind: Job
 spec:
-  backoffLimit: 3           # fail হলে 3 বার retry
+  backoffLimit: 3 # fail হলে 3 বার retry
   activeDeadlineSeconds: 300 # 5 মিনিটের বেশি না
   template:
     spec:
       restartPolicy: Never
       containers:
         - command:
-            - npx prisma db push  # Database migration
+            - npx prisma db push # Database migration
 ```
 
 **কেন আলাদা Job?**
+
 - Deployment-এ `initContainer` দিলে প্রতি pod restart-এ migration চলে (3 replicas = 3 বার!)
 - Job একবারই চলে, complete হলে শেষ
 
@@ -299,14 +315,15 @@ spec:
 # StatefulSet এর volumeClaimTemplates
 volumeClaimTemplates:
   - spec:
-      accessModes: ["ReadWriteOnce"]
-      storageClassName: gp2      # AWS EBS disk
+      accessModes: ['ReadWriteOnce']
+      storageClassName: gp2 # AWS EBS disk
       resources:
         requests:
-          storage: 10Gi          # 10GB disk
+          storage: 10Gi # 10GB disk
 ```
 
 **কীভাবে কাজ করে:**
+
 ```
 StatefulSet → PVC create করে → AWS EBS disk attach হয় → Pod data রাখে
 Pod restart হলেও data থাকে (disk-এ আছে)
@@ -319,14 +336,15 @@ Pod restart হলেও data থাকে (disk-এ আছে)
 ```yaml
 resources:
   requests:
-    memory: "256Mi"   # K8s এই pod-এর জন্য 256MB reserve রাখবে
-    cpu: "200m"       # 200 millicores = 0.2 CPU core
+    memory: '256Mi' # K8s এই pod-এর জন্য 256MB reserve রাখবে
+    cpu: '200m' # 200 millicores = 0.2 CPU core
   limits:
-    memory: "512Mi"   # এর বেশি নিলে OOMKilled হবে
-    cpu: "500m"       # এর বেশি use করতে পারবে না
+    memory: '512Mi' # এর বেশি নিলে OOMKilled হবে
+    cpu: '500m' # এর বেশি use করতে পারবে না
 ```
 
 **CPU unit:**
+
 ```
 1000m = 1 CPU core
 200m  = 0.2 CPU core (20%)
@@ -339,7 +357,7 @@ resources:
 ```yaml
 kind: PodDisruptionBudget
 spec:
-  minAvailable: 1   # যেকোনো সময় minimum 1 pod চলতে হবে
+  minAvailable: 1 # যেকোনো সময় minimum 1 pod চলতে হবে
   selector:
     matchLabels:
       app: auth-service
@@ -369,22 +387,22 @@ auth-db (PG)         product-db (PG)     order-db (PG)
 
 ## 📋 কোন ফাইলে কী Resource আছে?
 
-| ফাইল | Kind | উদ্দেশ্য |
-|------|------|---------|
-| `00-namespace.yaml` | Namespace | `ecommerce` namespace তৈরি |
-| `01-secrets.yaml` | Secret (×6) | Passwords, JWT, DB URLs |
-| `02-redis.yaml` | StatefulSet + Service×2 | Cache server |
-| `03-kafka.yaml` | StatefulSet + Service×2 | Message broker |
-| `04-databases.yaml` | StatefulSet×3 + Service×6 | 3 PostgreSQL DB |
-| `05-auth-service.yaml` | Deployment + Service + HPA + PDB | Auth microservice |
-| `06-product-service.yaml` | Deployment + Service + HPA + PDB | Product microservice |
-| `07-order-service.yaml` | Deployment + Service + HPA + PDB | Order microservice |
-| `08-ingress.yaml` | Ingress (×4) | HTTP routing + TLS |
-| `09-cluster-autoscaler.yaml` | ServiceAccount + ClusterRole | Node auto-scaling |
-| `10-configmap.yaml` | ConfigMap | Non-sensitive config |
-| `11-network-policy.yaml` | NetworkPolicy (×8) | Zero trust security |
-| `12-db-migration-job.yaml` | Job (×3) | Prisma DB migration |
-| `kustomization.yaml` | Kustomization | সব একসাথে manage |
+| ফাইল                         | Kind                             | উদ্দেশ্য                   |
+| ---------------------------- | -------------------------------- | -------------------------- |
+| `00-namespace.yaml`          | Namespace                        | `ecommerce` namespace তৈরি |
+| `01-secrets.yaml`            | Secret (×6)                      | Passwords, JWT, DB URLs    |
+| `02-redis.yaml`              | StatefulSet + Service×2          | Cache server               |
+| `03-kafka.yaml`              | StatefulSet + Service×2          | Message broker             |
+| `04-databases.yaml`          | StatefulSet×3 + Service×6        | 3 PostgreSQL DB            |
+| `05-auth-service.yaml`       | Deployment + Service + HPA + PDB | Auth microservice          |
+| `06-product-service.yaml`    | Deployment + Service + HPA + PDB | Product microservice       |
+| `07-order-service.yaml`      | Deployment + Service + HPA + PDB | Order microservice         |
+| `08-ingress.yaml`            | Ingress (×4)                     | HTTP routing + TLS         |
+| `09-cluster-autoscaler.yaml` | ServiceAccount + ClusterRole     | Node auto-scaling          |
+| `10-configmap.yaml`          | ConfigMap                        | Non-sensitive config       |
+| `11-network-policy.yaml`     | NetworkPolicy (×8)               | Zero trust security        |
+| `12-db-migration-job.yaml`   | Job (×3)                         | Prisma DB migration        |
+| `kustomization.yaml`         | Kustomization                    | সব একসাথে manage           |
 
 ---
 

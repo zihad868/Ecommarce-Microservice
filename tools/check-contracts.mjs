@@ -9,9 +9,10 @@ function check(directory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const filename = join(directory, entry.name);
     if (entry.isDirectory()) check(filename);
-    else if (filename.endsWith('.proto')) loader.loadSync(filename, {
-      includeDirs: [join(root, 'contracts/proto'), join(root, 'contracts/events')],
-    });
+    else if (filename.endsWith('.proto'))
+      loader.loadSync(filename, {
+        includeDirs: [join(root, 'contracts/proto'), join(root, 'contracts/events')],
+      });
   }
 }
 check(join(root, 'contracts/proto'));
