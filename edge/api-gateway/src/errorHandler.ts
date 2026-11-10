@@ -16,11 +16,15 @@ export const createErrorHandler =
   (logger: Logger): ErrorRequestHandler =>
   (error: unknown, req, res, next) => {
     if (res.headersSent) return next(error);
+
     let status = 500,
       code = 'INTERNAL',
       message = 'Internal service error';
+
     let details: unknown;
+
     const known = isGrpc(error) ? fromGrpcError(error) : normalizeError(error);
+
     if (error instanceof z.ZodError) {
       status = 400;
       code = 'VALIDATION_ERROR';
@@ -32,6 +36,7 @@ export const createErrorHandler =
     } else if (known instanceof ApiError) {
       status = known.statusCode;
       code = known instanceof DomainError ? known.code : `HTTP_${status}`;
+
       message =
         status === 503
           ? 'Service unavailable'
@@ -40,6 +45,7 @@ export const createErrorHandler =
             : status < 500
               ? known.message
               : message;
+
       if (status < 500 && known instanceof DomainError) details = known.details;
     } else if (
       error instanceof SyntaxError &&
@@ -59,6 +65,7 @@ export const createErrorHandler =
       code = 'PAYLOAD_TOO_LARGE';
       message = 'Payload too large';
     }
+
     if (status >= 500) {
       logger.error(
         {
@@ -71,6 +78,7 @@ export const createErrorHandler =
         'Request failed',
       );
     }
+
     res.status(status).json({
       success: false,
       error: {
