@@ -28,22 +28,29 @@ const env = parseEnv(
     AUTH_REQUEST_LIMIT: z.coerce.number().int().positive().default(30),
   }),
 );
+
 const logger = createLogger({ serviceName: 'api-gateway' });
+
 const redis = createRedisClient({
   serviceName: 'api-gateway',
   host: env.REDIS_HOST,
   port: env.REDIS_PORT,
   password: env.REDIS_PASSWORD,
 });
+
 const backend = createBackend({
   identity: env.AUTH_GRPC_URL,
   verifyToken: localTokenVerifier(env.JWT_PUBLIC_KEY, redis),
   catalog: env.PRODUCT_GRPC_URL,
   order: env.ORDER_GRPC_URL,
 });
+
 initMetrics('api-gateway');
+
 const app = express();
+
 app.use(metricsMiddleware());
+
 app.use(
   createApp(backend, {
     logger,
@@ -66,15 +73,19 @@ app.use(
     }),
   }),
 );
+
 // Metrics listener stays internal and does not add a public route to the gateway API.
 const operations = express();
+
 operations.get('/metrics', (req, res) => {
   void metricsHandler(req, res);
 });
+
 const operationsServer = operations.listen(env.PORT + 1000);
 const server = app.listen(env.PORT, () => {
   logger.info({ port: env.PORT }, 'Gateway listening');
 });
+
 registerGracefulShutdown({
   serviceName: 'api-gateway',
   httpServer: server,
