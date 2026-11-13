@@ -10,6 +10,7 @@ if (!dlqTopic) {
 }
 
 const targetTopic = dlqTopic.replace(/\.dlq$/, '');
+
 if (targetTopic === dlqTopic) {
   console.error(`Error: DLQ topic "${dlqTopic}" does not end with ".dlq"`);
   process.exit(1);
@@ -24,6 +25,7 @@ const admin = kafka.admin();
 await admin.connect();
 
 let topicOffsets = [];
+
 try {
   topicOffsets = await admin.fetchTopicOffsets(dlqTopic);
 } catch (err) {
@@ -53,6 +55,7 @@ let idleTimer;
 
 const cleanupAndExit = async () => {
   if (idleTimer) clearTimeout(idleTimer);
+
   console.log(`Replayed ${replayedCount} messages from ${dlqTopic} to ${targetTopic}`);
   await consumer.disconnect().catch(() => {});
   await producer.disconnect().catch(() => {});
@@ -62,6 +65,7 @@ const cleanupAndExit = async () => {
 
 const resetIdleTimer = () => {
   if (idleTimer) clearTimeout(idleTimer);
+
   idleTimer = setTimeout(() => {
     void cleanupAndExit();
   }, 3000);
@@ -74,9 +78,11 @@ await consumer.run({
     resetIdleTimer();
 
     let rawBuffer = message.value;
+
     if (message.value) {
       try {
         const parsed = JSON.parse(message.value.toString('utf8'));
+
         if (parsed.encoding === 'base64' && typeof parsed.originalMessage === 'string') {
           rawBuffer = Buffer.from(parsed.originalMessage, 'base64');
         }
@@ -101,6 +107,7 @@ await consumer.run({
     });
 
     replayedCount++;
+
     if (replayedCount >= Number(totalAvailable)) {
       setImmediate(() => {
         void cleanupAndExit();

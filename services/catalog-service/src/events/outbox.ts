@@ -18,6 +18,9 @@ export const outbox = createOutboxWorker({
 });
 
 export const processOutboxEvents = (batchSize?: number) => outbox.processOnce(batchSize);
+
 export const maintainOutbox = () => outbox.maintain();
+
 export const startOutboxWorker = (intervalMs?: number) => outbox.start(intervalMs);
+
 export const stopOutboxWorker = () => outbox.stop();

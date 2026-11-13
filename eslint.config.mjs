@@ -34,6 +34,8 @@ export default tseslint.config(
       '@typescript-eslint/restrict-template-expressions': 'warn',
 
       // --- Errors that should stay as errors ---
+      'func-style': ['error', 'expression'],
+      'prefer-arrow-callback': 'error',
       'no-console': 'error',
       '@typescript-eslint/no-non-null-assertion': 'error',
       '@typescript-eslint/consistent-type-imports': [

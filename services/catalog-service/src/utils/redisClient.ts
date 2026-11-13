@@ -11,6 +11,7 @@ export const getRedisClient = (): Redis => {
     port: config.REDIS_PORT,
     password: config.REDIS_PASSWORD,
   });
+
   return redis;
 };
 

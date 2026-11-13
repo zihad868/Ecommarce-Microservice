@@ -24,8 +24,9 @@ const httpToGrpc: Record<number, status> = {
   504: status.DEADLINE_EXCEEDED,
 };
 
-export function normalizeError(error: unknown): ApiError | undefined {
+export const normalizeError = (error: unknown): ApiError | undefined => {
   if (error instanceof ApiError) return error;
+
   const code =
     typeof error === 'object' && error !== null
       ? 'code' in error
@@ -34,6 +35,7 @@ export function normalizeError(error: unknown): ApiError | undefined {
           ? error.errorCode
           : undefined
       : undefined;
+
   switch (code) {
     case 'P2002':
       return new AlreadyExistsError();
@@ -52,14 +54,15 @@ export function normalizeError(error: unknown): ApiError | undefined {
     default:
       return undefined;
   }
-}
+};
 
 export const isServerError = (error: unknown): boolean => {
   const known = normalizeError(error);
+
   return !known || known.statusCode >= 500;
 };
 
-export function toGrpcError(error: unknown): ServiceError {
+export const toGrpcError = (error: unknown): ServiceError => {
   const known = normalizeError(error);
   const metadata = new Metadata();
   const http = known?.statusCode ?? 500;
@@ -72,15 +75,18 @@ export function toGrpcError(error: unknown): ServiceError {
       : http === 503
         ? 'Service temporarily unavailable'
         : 'Internal service error';
+
   if (known instanceof DomainError && known.details !== undefined && http < 500) {
     metadata.set('error-details-bin', Buffer.from(JSON.stringify(known.details)));
   }
+
   metadata.set('error-code', errorCode);
   metadata.set('http-status', String(http));
-  return Object.assign(new Error(message), { code, details: message, metadata });
-}
 
-export function grpcToHttp(code: number): number {
+  return Object.assign(new Error(message), { code, details: message, metadata });
+};
+
+export const grpcToHttp = (code: number): number => {
   const map: Record<number, number> = {
     [status.INVALID_ARGUMENT]: 400,
     [status.OUT_OF_RANGE]: 400,
@@ -96,12 +102,13 @@ export function grpcToHttp(code: number): number {
     [status.UNAVAILABLE]: 503,
     [status.DEADLINE_EXCEEDED]: 504,
   };
-  return map[code] ?? 500;
-}
 
-export function fromGrpcError(
+  return map[code] ?? 500;
+};
+
+export const fromGrpcError = (
   error: Pick<ServiceError, 'code' | 'details'> & { metadata?: Metadata },
-): DomainError {
+): DomainError => {
   const candidate = Number(error.metadata?.get('http-status')[0]);
   const http =
     Number.isInteger(candidate) && candidate >= 400 && candidate < 600
@@ -110,6 +117,7 @@ export function fromGrpcError(
   const code = String(error.metadata?.get('error-code')[0] ?? 'UPSTREAM_ERROR');
   let details: unknown;
   const bin = error.metadata?.get('error-details-bin')[0];
+
   if (http < 500 && Buffer.isBuffer(bin)) {
     try {
       details = JSON.parse(bin.toString());
@@ -117,11 +125,13 @@ export function fromGrpcError(
       /* Ignore malformed upstream details. */
     }
   }
+
   const message =
     http < 500
       ? error.details || 'Request rejected'
       : http === 503
         ? 'Service temporarily unavailable'
         : 'Internal service error';
+
   return new DomainError(code, message, http, error.code, details);
-}
+};

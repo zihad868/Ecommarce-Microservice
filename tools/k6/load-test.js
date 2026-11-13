@@ -4,6 +4,7 @@ import exec from 'k6/execution';
 
 const base = __ENV.GATEWAY_URL || 'http://localhost:8081';
 const peak = Number(__ENV.TARGET_RPS || 5000);
+
 const scenario = (fraction, execName) => ({
   executor: 'ramping-arrival-rate',
   exec: execName,
@@ -18,6 +19,7 @@ const scenario = (fraction, execName) => ({
     { duration: '1m', target: 0 },
   ],
 });
+
 export const options = {
   scenarios: {
     browse: scenario(0.8, 'browse'),
@@ -31,27 +33,35 @@ export const options = {
   },
 };
 const headers = { 'Content-Type': 'application/json' };
+
 const credentials = () =>
   JSON.stringify({ email: __ENV.LOAD_EMAIL, password: __ENV.LOAD_PASSWORD });
-export function setup() {
+
+export const setup = () => {
   if (!__ENV.LOAD_EMAIL || !__ENV.LOAD_PASSWORD || !__ENV.PRODUCT_ID)
     throw new Error('Provide LOAD_EMAIL, LOAD_PASSWORD and PRODUCT_ID for seeded test data');
+
   const response = http.post(`${base}/api/auth/login`, credentials(), { headers });
+
   if (response.status !== 200) throw new Error('Test login failed');
+
   return { token: response.json('data.tokens.accessToken'), runId: Date.now() };
-}
-export function browse() {
+};
+
+export const browse = () => {
   const response = http.get(`${base}/api/products?limit=10`, { tags: { name: 'browse' } });
   check(response, { 'browse succeeds': (r) => r.status === 200 });
-}
-export function login() {
+};
+
+export const login = () => {
   const response = http.post(`${base}/api/auth/login`, credentials(), {
     headers,
     tags: { name: 'login' },
   });
   check(response, { 'login succeeds': (r) => r.status === 200 });
-}
-export function checkout(data) {
+};
+
+export const checkout = (data) => {
   const response = http.post(
     `${base}/api/orders`,
     JSON.stringify({ items: [{ productId: __ENV.PRODUCT_ID, quantity: 1 }] }),
@@ -65,4 +75,4 @@ export function checkout(data) {
     },
   );
   check(response, { 'order reserved and created': (r) => r.status === 201 });
-}
+};

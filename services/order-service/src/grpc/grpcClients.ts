@@ -64,6 +64,7 @@ export const reserveStock = async (
     if (err && typeof err === 'object' && 'code' in err && typeof err.code === 'number') {
       throw fromGrpcError(err as ServiceError);
     }
+
     throw err;
   }
 };
@@ -83,6 +84,7 @@ export const releaseStockRemote = async (orderId: string, timeoutMs = 10_000): P
     if (err && typeof err === 'object' && 'code' in err && typeof err.code === 'number') {
       throw fromGrpcError(err as ServiceError);
     }
+
     throw err;
   }
 };

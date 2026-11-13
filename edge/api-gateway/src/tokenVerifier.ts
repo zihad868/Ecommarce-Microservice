@@ -3,21 +3,25 @@ import { UnauthenticatedError, DependencyUnavailableError } from '@ecommerce/err
 import { getMetricsBundle } from '@ecommerce/observability';
 import type { TokenResult } from './backend';
 
-export function localTokenVerifier(
+export const localTokenVerifier = (
   publicKey: string,
   revocation: { get(key: string): Promise<string | null> },
   redisRevocationErrors: { inc(): void } = getMetricsBundle().redisRevocationErrors,
-) {
+) => {
   return async (token: string): Promise<TokenResult> => {
     let payload: jwt.JwtPayload;
+
     try {
       const decoded = jwt.verify(token, publicKey.replace(/\\n/g, '\n'), {
         algorithms: ['RS256'],
         issuer: 'ecommerce-identity',
         audience: 'ecommerce-gateway',
       });
+
       if (typeof decoded === 'string') throw new Error('Invalid claims');
+
       payload = decoded;
+
       if (
         typeof payload.id !== 'string' ||
         !['USER', 'ADMIN'].includes(String(payload.role)) ||
@@ -28,19 +32,24 @@ export function localTokenVerifier(
     } catch {
       throw new UnauthenticatedError('Invalid token');
     }
+
     let cutoff: string | null = null;
     const key = `auth:revoked-before:${String(payload.id)}`;
+
     try {
       cutoff = await revocation.get(key);
     } catch {
       redisRevocationErrors.inc();
+
       if (payload.role === 'ADMIN') {
         throw new DependencyUnavailableError('Session check unavailable');
       }
       /* Redis outage degrades to signature and expiry validation for regular users. */
     }
+
     if (cutoff && Number(payload.issuedAt) <= Number(cutoff))
       throw new UnauthenticatedError('Token revoked');
+
     return { valid: true, userId: String(payload.id), role: String(payload.role), error: '' };
   };
-}
+};

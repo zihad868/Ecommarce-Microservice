@@ -15,11 +15,12 @@ const credentialsSchema = z.object({
   password: z.string().min(1).max(1024),
 });
 const idSchema = z.string().min(1).max(128);
+
 export const rejectRateLimitedRequest: RequestHandler = (_req, _res, next) => {
   next(new ApiError(429, 'Too many requests'));
 };
 
-export function createApp(
+export const createApp = (
   backend: GatewayBackend,
   options: {
     logger: Logger;
@@ -27,7 +28,7 @@ export function createApp(
     authLimiter?: RequestHandler;
     ready?: () => Promise<void>;
   },
-): express.Express {
+): express.Express => {
   const app = express();
 
   app.disable('x-powered-by');
@@ -133,12 +134,17 @@ export function createApp(
 
   const protect: RequestHandler = async (req, res, next) => {
     const match = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '');
+
     if (!match) throw new UnauthenticatedError('Bearer token required');
+
     const user = await backend.validateToken(match[1], context(req));
+
     if (!user.valid || !user.userId) throw new UnauthenticatedError('Invalid token');
+
     res.locals.user = user;
     next();
   };
+
   app.get('/api/auth/me', protect, async (req, res) => {
     res.json({ success: true, data: await backend.me(context(req)) });
   });
@@ -187,6 +193,7 @@ export function createApp(
       async (req, res) => {
         if ((res.locals.user as { role: string }).role !== 'ADMIN')
           throw new ForbiddenError('Administrator required');
+
         const data = await backend.mutateProduct(
           action,
           action === 'create' ? '' : idSchema.parse(req.params.id),
@@ -209,9 +216,11 @@ export function createApp(
   app.get('/api/orders/:id', protect, async (req, res) => {
     const user = res.locals.user as { userId: string; role: string };
     const result = await backend.order(idSchema.parse(req.params.id), context(req));
+
     if (result.userId !== user.userId && user.role !== 'ADMIN') {
       throw new NotFoundError('Order');
     }
+
     res.json({ success: true, data: result });
   });
 
@@ -225,4 +234,4 @@ export function createApp(
   app.use(createErrorHandler(options.logger));
 
   return app;
-}
+};

@@ -14,6 +14,7 @@ import { getProductDetails, reserveStock, releaseStockRemote } from '../grpc/grp
 import { validateTransition } from './orderStateMachine';
 import type { CreateOrderItemInput, UpdateOrderStatusInput } from '../validators/orderValidators';
 import { createLogger } from '@ecommerce/observability';
+
 const logger = createLogger({ serviceName: 'order-service' });
 
 export const createOrder = async (
@@ -24,17 +25,22 @@ export const createOrder = async (
   const requestHash = createHash('sha256')
     .update(JSON.stringify([...items].sort((a, b) => a.productId.localeCompare(b.productId))))
     .digest('hex');
+
   const replay = (record: { requestHash: string; response: Prisma.JsonValue }): Order => {
     if (record.requestHash !== requestHash) throw new IdempotencyConflictError();
+
     return mapOrderResponse(record.response as unknown as Order);
   };
+
   // 1. Idempotency Key check — scoped to userId to prevent cross-user leakage
   if (idempotencyKey) {
     const existing = await prisma.idempotencyRecord.findUnique({
       where: { userId_key: { userId, key: idempotencyKey } },
     });
+
     if (existing) {
       logger.info({ idempotencyKey, userId }, 'Returning cached order for idempotency key');
+
       return replay(existing);
     }
   }
@@ -50,6 +56,7 @@ export const createOrder = async (
 
   for (const item of items) {
     let productResponse;
+
     try {
       productResponse = await getProductDetails(item.productId);
     } catch (grpcErr) {
@@ -57,9 +64,11 @@ export const createOrder = async (
         typeof grpcErr === 'object' && grpcErr !== null && 'code' in grpcErr
           ? grpcErr.code
           : undefined;
+
       if (code === 5) {
         throw new ValidationError(`Product ${item.productId} not found`);
       }
+
       const msg = grpcErr instanceof Error ? grpcErr.message : String(grpcErr);
       logger.error(
         { err: grpcErr, msg, productId: item.productId },
@@ -99,12 +108,15 @@ export const createOrder = async (
     const createdOrder = await prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${orderId}, 0))`;
+
         if (idempotencyKey) {
           const existing = await tx.idempotencyRecord.findUnique({
             where: { userId_key: { userId, key: idempotencyKey } },
           });
+
           if (existing) return replay(existing);
         }
+
         const order = await tx.order.create({
           data: {
             id: orderId,
@@ -184,35 +196,41 @@ export const createOrder = async (
       const existing = await prisma.idempotencyRecord.findUnique({
         where: { userId_key: { userId, key: idempotencyKey } },
       });
+
       if (existing) return replay(existing);
     }
+
     // The order was not created: give the stock back now instead of waiting 15 minutes.
     const exists = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true } });
+
     if (!exists) {
       await releaseStockRemote(orderId).catch((e) =>
         logger.error({ e, orderId }, 'release failed'),
       );
     }
+
     throw err;
   }
 };
 
-function encodeCursor(order: { createdAt: Date; id: string }): string {
+const encodeCursor = (order: { createdAt: Date; id: string }): string => {
   return Buffer.from(
     JSON.stringify({ createdAt: order.createdAt.toISOString(), id: order.id }),
   ).toString('base64');
-}
+};
 
-function decodeCursor(cursorStr: string): { createdAt: Date; id: string } | null {
+const decodeCursor = (cursorStr: string): { createdAt: Date; id: string } | null => {
   try {
     const raw = Buffer.from(cursorStr, 'base64').toString('utf8');
     const parsed = JSON.parse(raw) as { createdAt: string; id: string };
+
     if (!parsed.createdAt || !parsed.id) return null;
+
     return { createdAt: new Date(parsed.createdAt), id: parsed.id };
   } catch {
     return null;
   }
-}
+};
 
 export const getOrders = async (
   userId: string,
@@ -221,9 +239,11 @@ export const getOrders = async (
 ) => {
   const limit = Math.min(Math.max(query.limit ?? 20, 1), 100);
   const base: Prisma.OrderWhereInput = {};
+
   if (userRole !== 'ADMIN') {
     base.userId = userId;
   }
+
   if (query.status) {
     base.status = query.status;
   }
@@ -251,6 +271,7 @@ export const getOrders = async (
   const nextCursor = hasMore && lastItem ? encodeCursor(lastItem) : null;
 
   let total: number | undefined;
+
   if (query.includeTotal) {
     total = await prisma.order.count({ where: base });
   }
@@ -311,8 +332,11 @@ export const updateOrderStatus = async (
       where: { id: orderId, status: order.status },
       data: { status: targetStatus },
     });
+
     if (count === 0) throw new ConcurrentModificationError();
+
     if (targetStatus === OrderStatus.CANCELLED) await enqueueStockRelease(tx, orderId);
+
     return tx.order.findUniqueOrThrow({ where: { id: orderId }, include: { items: true } });
   });
 
@@ -334,6 +358,7 @@ export const mapOrderResponse = (order: Order): Order => ({
       }
     : {}),
 });
+
 const enqueueStockRelease = (tx: Prisma.TransactionClient, orderId: string) =>
   tx.outboxEvent.create({
     data: {
@@ -342,32 +367,41 @@ const enqueueStockRelease = (tx: Prisma.TransactionClient, orderId: string) =>
       payload: { eventId: uuidv4(), orderId },
     },
   });
+
 export const reconcileReservation = (orderId: string) =>
   prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${orderId}, 0))`;
     const order = await tx.order.findUnique({ where: { id: orderId } });
+
     if (!order) return { release: true, commit: false };
+
     if (order.status === 'PENDING' && order.createdAt.getTime() <= Date.now() - 15 * 60_000) {
       const { count } = await tx.order.updateMany({
         where: { id: orderId, status: 'PENDING' },
         data: { status: 'CANCELLED' },
       });
+
       if (count) {
         await enqueueStockRelease(tx, orderId);
+
         return { release: true, commit: false };
       }
+
       return { release: false, commit: false };
     }
+
     return {
       release: order.status === 'CANCELLED',
       commit: ['PAID', 'SHIPPED', 'COMPLETED'].includes(order.status),
     };
   });
+
 export const cancelOrderForStockFailure = (orderId: string) =>
   prisma.$transaction(async (tx) => {
     const { count } = await tx.order.updateMany({
       where: { id: orderId, status: { in: ['PENDING', 'CONFIRMED'] } },
       data: { status: 'CANCELLED' },
     });
+
     if (count) await enqueueStockRelease(tx, orderId);
   });

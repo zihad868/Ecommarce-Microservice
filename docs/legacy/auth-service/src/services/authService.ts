@@ -59,6 +59,7 @@ export const registerUser = async (input: RegisterInput) => {
   const email = input.email.trim().toLowerCase();
 
   const existingUser = await prisma.user.findUnique({ where: { email } });
+
   if (existingUser) {
     throw new ApiError(httpStatus.CONFLICT, 'User with this email already exists');
   }
@@ -94,11 +95,13 @@ export const loginUser = async (emailInput: string, passwordInput: string) => {
   const email = emailInput.trim().toLowerCase();
 
   const user = await prisma.user.findUnique({ where: { email } });
+
   if (!user) {
     throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid credentials');
   }
 
   const isPasswordValid = await argon2.verify(user.password, passwordInput);
+
   if (!isPasswordValid) {
     throw new ApiError(httpStatus.UNAUTHORIZED, 'Invalid credentials');
   }
@@ -181,11 +184,13 @@ export const getUserById = async (id: string) => {
   const cacheKey = `user:${id}`;
 
   const cached = await redis.get(cacheKey);
+
   if (cached) {
     return JSON.parse(cached) as CachedUser;
   }
 
   const user = await prisma.user.findUnique({ where: { id } });
+
   if (!user) {
     return null;
   }
@@ -198,6 +203,7 @@ export const getUserById = async (id: string) => {
 
 export const validateToken = async (token: string) => {
   let decoded: JwtTokenPayload;
+
   try {
     decoded = jwt.verify(token, config.JWT_SECRET) as JwtTokenPayload;
   } catch {
@@ -210,8 +216,10 @@ export const validateToken = async (token: string) => {
 
   // Check Redis cache first
   const cachedUserStr = await redis.get(cacheKey);
+
   if (cachedUserStr) {
     const cachedUser = JSON.parse(cachedUserStr) as CachedUser;
+
     return {
       valid: true,
       userId: cachedUser.id,
@@ -222,6 +230,7 @@ export const validateToken = async (token: string) => {
 
   // Cache MISS -> query PostgreSQL
   const user = await prisma.user.findUnique({ where: { id: userId } });
+
   if (!user) {
     return { valid: false, userId: '', role: '', error: 'User not found' };
   }

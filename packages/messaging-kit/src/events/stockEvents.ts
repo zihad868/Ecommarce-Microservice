@@ -40,15 +40,18 @@ const releaseReqCodec = eventCodec(
 
 export const encodeStockReservationFailed = (e: unknown): Buffer =>
   failedCodec.serialize(stockReservationFailedSchema.parse(e));
+
 export const decodeStockReservationFailed = (b: Buffer): StockReservationFailedEvent =>
   stockReservationFailedSchema.parse(failedCodec.deserialize(b));
 
 export const encodeStockReleased = (e: unknown): Buffer =>
   releasedCodec.serialize(stockReleasedSchema.parse(e));
+
 export const decodeStockReleased = (b: Buffer): StockReleasedEvent =>
   stockReleasedSchema.parse(releasedCodec.deserialize(b));
 
 export const encodeStockReleaseRequested = (e: unknown): Buffer =>
   releaseReqCodec.serialize(stockReleaseRequestedSchema.parse(e));
+
 export const decodeStockReleaseRequested = (b: Buffer): StockReleaseRequestedEvent =>
   stockReleaseRequestedSchema.parse(releaseReqCodec.deserialize(b));

@@ -55,7 +55,7 @@ export interface OutboxWorker {
   maintain(): Promise<void>;
 }
 
-export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorker {
+export const createOutboxWorker = (opts: CreateOutboxWorkerOptions): OutboxWorker => {
   const {
     db,
     publish,
@@ -71,6 +71,7 @@ export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorke
     if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 100) {
       throw new RangeError('Invalid batch size');
     }
+
     return db.$transaction(
       async (rawTx: unknown) => {
         const tx = rawTx as OutboxTx;
@@ -79,6 +80,7 @@ export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorke
         WHERE status = 'PENDING' AND "nextAttemptAt" <= NOW()
         ORDER BY "createdAt", id LIMIT ${batchSize} FOR UPDATE SKIP LOCKED`;
         let published = 0;
+
         for (const row of rows) {
           try {
             const targetTopic = topicFor(row.eventType);
@@ -98,6 +100,7 @@ export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorke
             logger.error({ eventId: row.id, retryCount, lastError }, 'Outbox publication failed');
             continue;
           }
+
           await tx.outboxEvent.update({
             where: { id: row.id },
             data: {
@@ -107,6 +110,7 @@ export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorke
           });
           published++;
         }
+
         return published;
       },
       { timeout: 30_000 },
@@ -128,18 +132,23 @@ export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorke
 
   const start = (intervalMs = defaultIntervalMs): void => {
     if (running) return;
+
     running = true;
     let nextMaintenance = 0;
+
     const tick = async () => {
       try {
         await processOnce();
+
         if (Date.now() >= nextMaintenance) {
           await maintain();
+
           if (onMetricsUpdate) {
             const pending = await db.outboxEvent.count({ where: { status: 'PENDING' } });
             const failed = await db.outboxEvent.count({ where: { status: 'FAILED' } });
             onMetricsUpdate({ pending, failed });
           }
+
           nextMaintenance = Date.now() + 60_000;
         }
       } catch (err) {
@@ -152,12 +161,15 @@ export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorke
         }
       }
     };
+
     inFlight = tick();
   };
 
   const stop = async (): Promise<void> => {
     running = false;
+
     if (timer) clearTimeout(timer);
+
     await inFlight;
   };
 
@@ -167,4 +179,4 @@ export function createOutboxWorker(opts: CreateOutboxWorkerOptions): OutboxWorke
     processOnce,
     maintain,
   };
-}
+};

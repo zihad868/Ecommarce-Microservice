@@ -12,12 +12,13 @@ export interface OutboxStore {
   failed(id: string, error: unknown): Promise<void>;
 }
 
-export async function publishOutboxBatch(
+export const publishOutboxBatch = async (
   store: OutboxStore,
   publish: (message: OutboxMessage) => Promise<void>,
   limit = 20,
-): Promise<number> {
+): Promise<number> => {
   let published = 0;
+
   for (const message of await store.claim(limit)) {
     try {
       await publish(message);
@@ -28,5 +29,6 @@ export async function publishOutboxBatch(
       break;
     }
   }
+
   return published;
-}
+};

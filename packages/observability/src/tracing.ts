@@ -4,6 +4,7 @@ import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { GrpcInstrumentation } from '@opentelemetry/instrumentation-grpc';
 
 let sdk: NodeSDK | undefined;
+
 // Preload this module before importing HTTP or gRPC application code.
 if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
   sdk = new NodeSDK({
@@ -13,6 +14,6 @@ if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
   sdk.start();
 }
 
-export async function shutdownTracing(): Promise<void> {
+export const shutdownTracing = async (): Promise<void> => {
   await sdk?.shutdown();
-}
+};

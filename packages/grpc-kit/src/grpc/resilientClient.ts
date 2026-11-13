@@ -29,6 +29,7 @@ const RETRYABLE_CODES = new Set<number>([
  */
 const calculateJitteredBackoff = (attempt: number, baseMs: number, maxMs: number): number => {
   const exponential = Math.min(maxMs, baseMs * 2 ** attempt);
+
   return Math.floor(Math.random() * exponential);
 };
 
@@ -58,6 +59,7 @@ export const invokeResilientGrpc = async <TReq, TRes>(
 
   const breakerKey = `${serviceName}.${methodName}`;
   let breaker = circuitBreakers.get(breakerKey);
+
   if (!breaker) {
     const cbOptions: CircuitBreaker.Options = {
       timeout: timeoutMs + 1000,
@@ -88,10 +90,12 @@ export const invokeResilientGrpc = async <TReq, TRes>(
               },
             );
           });
+
           return result;
         } catch (err: any) {
           lastError = err;
           const grpcCode = err?.code;
+
           if (
             attempt < maxRetries &&
             typeof grpcCode === 'number' &&
@@ -101,6 +105,7 @@ export const invokeResilientGrpc = async <TReq, TRes>(
             await delay(backoff);
             continue;
           }
+
           throw err;
         }
       }

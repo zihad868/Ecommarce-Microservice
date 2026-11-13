@@ -9,6 +9,7 @@ interface GrpcLike {
   details: string;
   metadata?: Metadata;
 }
+
 const isGrpc = (error: unknown): error is GrpcLike =>
   typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'number';
 

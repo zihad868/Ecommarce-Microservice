@@ -3,6 +3,7 @@ import { bindGrpc } from '@ecommerce/grpc-kit';
 import config from '../config';
 import { orderHandlers } from './handlers/orders';
 import { orderV2Handlers } from './handlers/ordersV2';
+
 export const startGrpcServer = () =>
   bindGrpc(
     loadOrder().order.v1.OrderService.service,

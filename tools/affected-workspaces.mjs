@@ -31,5 +31,6 @@ const images = affected.filter((name) =>
   ['api-gateway', 'identity-service', 'catalog-service', 'order-service'].includes(name),
 );
 const output = `services=${JSON.stringify(affected)}\nimages=${JSON.stringify(images)}\n`;
+
 if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, output);
 else process.stdout.write(output);

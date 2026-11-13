@@ -5,10 +5,13 @@ const tlsMaterial = () => {
   const { GRPC_TLS_CA, GRPC_TLS_CERT, GRPC_TLS_KEY } = process.env;
   const required =
     process.env.GRPC_TLS_REQUIRED === 'true' || process.env.NODE_ENV === 'production';
+
   if (!GRPC_TLS_CA || !GRPC_TLS_CERT || !GRPC_TLS_KEY) {
     if (required) throw new Error('gRPC mTLS material is required');
+
     return null;
   }
+
   return {
     ca: readFileSync(GRPC_TLS_CA),
     cert: readFileSync(GRPC_TLS_CERT),
@@ -24,10 +27,13 @@ export const getClientCredentials = (
   rootCert?: Buffer,
 ): grpc.ChannelCredentials => {
   const material = tlsMaterial();
+
   if (material) return grpc.credentials.createSsl(material.ca, material.key, material.cert);
+
   if (useTls) {
     return grpc.credentials.createSsl(rootCert);
   }
+
   return grpc.credentials.createInsecure();
 };
 
@@ -40,14 +46,17 @@ export const getServerCredentials = (
   rootCert?: Buffer,
 ): grpc.ServerCredentials => {
   const material = tlsMaterial();
+
   if (material)
     return grpc.ServerCredentials.createSsl(
       material.ca,
       [{ private_key: material.key, cert_chain: material.cert }],
       true,
     );
+
   if (useTls && keyCertPairs.length > 0) {
     return grpc.ServerCredentials.createSsl(rootCert ?? null, keyCertPairs);
   }
+
   return grpc.ServerCredentials.createInsecure();
 };

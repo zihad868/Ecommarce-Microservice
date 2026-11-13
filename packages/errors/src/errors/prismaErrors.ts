@@ -21,7 +21,9 @@ export interface PrismaValidationError {
 
 const formatMeta = (val: unknown, fallback = ''): string => {
   if (typeof val === 'string') return val;
+
   if (Array.isArray(val)) return val.map((item) => String(item)).join(', ');
+
   if (val !== undefined && val !== null) {
     try {
       return JSON.stringify(val);
@@ -29,6 +31,7 @@ const formatMeta = (val: unknown, fallback = ''): string => {
       return fallback;
     }
   }
+
   return fallback;
 };
 
@@ -79,5 +82,6 @@ export const handlePrismaValidationError = (
   const statusCode = 400;
   const message = 'Validation error';
   const errorMessages: IGenericErrorMessage[] = [{ path: '', message: error.message }];
+
   return { statusCode, message, errorMessages };
 };

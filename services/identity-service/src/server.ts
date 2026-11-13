@@ -8,6 +8,7 @@ import { startGrpcServer } from './grpc/authServer';
 const logger = createLogger({ serviceName: 'identity-service' });
 setGrpcLogger(logger);
 initMetrics('identity-service');
+
 const start = async () => {
   const grpcServer = await startGrpcServer();
   const server = operationsServer(() => prisma.$queryRaw`SELECT 1`);
@@ -24,6 +25,7 @@ const start = async () => {
     },
   });
 };
+
 void start().catch((err: unknown) => {
   logger.fatal({ err }, 'Startup failed');
   process.exit(1);

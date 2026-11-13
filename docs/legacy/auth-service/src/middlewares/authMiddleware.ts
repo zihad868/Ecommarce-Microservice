@@ -24,6 +24,7 @@ export const protect = async (req: Request, res: Response, next: NextFunction): 
 
   if (!token) {
     res.status(401).json({ success: false, error: 'Not authorized to access this route' });
+
     return;
   }
 
@@ -37,6 +38,7 @@ export const protect = async (req: Request, res: Response, next: NextFunction): 
 
     if (!user) {
       res.status(401).json({ success: false, error: 'User not found' });
+
       return;
     }
 

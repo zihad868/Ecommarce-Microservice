@@ -24,6 +24,7 @@ export const registerGracefulShutdown = (config: GracefulShutdownConfig): void =
     if (isShuttingDown) {
       return;
     }
+
     isShuttingDown = true;
 
     logger.info({ signal, service: config.serviceName }, 'Initiating graceful shutdown');
@@ -45,6 +46,7 @@ export const registerGracefulShutdown = (config: GracefulShutdownConfig): void =
             if (err) {
               logger.warn({ err }, 'Error closing HTTP server');
             }
+
             resolve();
           });
         });
@@ -57,6 +59,7 @@ export const registerGracefulShutdown = (config: GracefulShutdownConfig): void =
             if (err) {
               config.grpcServer?.forceShutdown();
             }
+
             resolve();
           });
         });
@@ -66,6 +69,7 @@ export const registerGracefulShutdown = (config: GracefulShutdownConfig): void =
       if (config.onShutdown) {
         await config.onShutdown();
       }
+
       await shutdownTracing();
 
       logger.info(`[Shutdown] ${config.serviceName} gracefully stopped`);

@@ -136,6 +136,7 @@ registerGracefulShutdown({
     } catch (err) {
       logger.warn({ err }, 'Error disconnecting Prisma');
     }
+
     try {
       redis.disconnect();
     } catch (err) {

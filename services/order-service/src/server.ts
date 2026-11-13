@@ -9,6 +9,7 @@ import { startOutboxWorker, stopOutboxWorker } from './events/outbox';
 const logger = createLogger({ serviceName: 'order-service' });
 setGrpcLogger(logger);
 initMetrics('order-service');
+
 const start = async () => {
   const grpcServer = await startGrpcServer();
   const server = operationsServer(() => prisma.$queryRaw`SELECT 1`);
@@ -27,6 +28,7 @@ const start = async () => {
     },
   });
 };
+
 void start().catch((err: unknown) => {
   logger.fatal({ err }, 'Startup failed');
   process.exit(1);

@@ -42,6 +42,7 @@ const validateToken = async (
         role: '',
         error: 'No token provided',
       });
+
       return;
     }
 
@@ -78,8 +79,10 @@ export const startGrpcServer = (): grpc.Server => {
     (err, boundPort) => {
       if (err) {
         console.error('Failed to bind gRPC server:', err);
+
         return;
       }
+
       console.log(`Auth gRPC Server running on port ${String(boundPort)}`);
     },
   );

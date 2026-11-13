@@ -37,12 +37,15 @@ export const getKafkaProducer = (): Producer | null => dlqProducer;
 
 const getDlqProducer = async (): Promise<Producer> => {
   if (dlqProducer) return dlqProducer;
+
   producerConnection ??= (async () => {
     const connected = kafka.producer({ idempotent: true });
     await connected.connect();
     dlqProducer = connected;
+
     return connected;
   })();
+
   try {
     return await producerConnection;
   } finally {
@@ -102,6 +105,7 @@ export const connectKafkaConsumer = async (): Promise<void> => {
       consumer,
       isRetryable: (error) => {
         const known = normalizeError(error);
+
         return !known || known.statusCode >= 500;
       },
       dlq: producer,
@@ -110,15 +114,19 @@ export const connectKafkaConsumer = async (): Promise<void> => {
         if (topic === TOPICS.orderCreated) {
           return { kind: 'orderCreated', data: decodeOrderCreated(bytes) };
         }
+
         if (topic === TOPICS.stockReleaseRequested) {
           return { kind: 'stockReleaseRequested', data: decodeStockReleaseRequested(bytes) };
         }
+
         throw new Error(`Unknown topic: ${topic}`);
       },
       handle: async (event) => {
         if (event.kind === 'stockReleaseRequested') {
           if (!event.data.orderId) throw new ValidationError('Missing order ID');
+
           await releaseStock(event.data.orderId);
+
           return;
         }
 
@@ -134,12 +142,14 @@ export const connectKafkaConsumer = async (): Promise<void> => {
               { eventId: orderCreated.eventId },
               'Event already processed (idempotent), skipping',
             );
+
             return;
           }
 
           const reservation = await tx.stockReservation.findUnique({
             where: { orderId: orderCreated.orderId },
           });
+
           if (!reservation || reservation.status === 'RELEASED') {
             await tx.outboxEvent.create({
               data: {
@@ -172,6 +182,7 @@ export const connectKafkaConsumer = async (): Promise<void> => {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error({ msg }, 'Kafka Consumer connection failed, retrying in 5s...');
     await consumer?.disconnect().catch(() => undefined);
+
     if (!stopping)
       retryTimer = setTimeout(() => {
         void connectKafkaConsumer();
@@ -181,14 +192,18 @@ export const connectKafkaConsumer = async (): Promise<void> => {
 
 export const disconnectKafkaConsumer = async (): Promise<void> => {
   stopping = true;
+
   if (retryTimer) clearTimeout(retryTimer);
+
   if (consumer) {
     await consumer.disconnect();
     logger.info('Product Service Kafka Consumer disconnected');
   }
+
   if (dlqProducer) {
     await dlqProducer.disconnect();
     logger.info('Product Service DLQ Producer disconnected');
   }
+
   dlqProducer = null;
 };

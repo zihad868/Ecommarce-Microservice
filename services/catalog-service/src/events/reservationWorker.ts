@@ -3,6 +3,7 @@ import { getClientCredentials } from '@ecommerce/grpc-kit';
 import { createLogger } from '@ecommerce/observability';
 import prisma from '../utils/prismaClient';
 import { releaseStock } from '../services/stockService';
+
 const logger = createLogger({ serviceName: 'catalog-service' });
 const client = new (loadOrder().order.v1.OrderService)(
   process.env.ORDER_GRPC_URL ?? 'localhost:50053',
@@ -11,12 +12,14 @@ const client = new (loadOrder().order.v1.OrderService)(
 let stopped = false;
 let timer: NodeJS.Timeout | undefined;
 let inFlight: Promise<void> | undefined;
+
 export const reconcileReservations = async () => {
   const rows = await prisma.stockReservation.findMany({
     where: { status: 'RESERVED', createdAt: { lte: new Date(Date.now() - 15 * 60_000) } },
     orderBy: { updatedAt: 'asc' },
     take: 100,
   });
+
   for (const row of rows) {
     try {
       // Order service atomically cancels PENDING orders before permitting a release.
@@ -32,6 +35,7 @@ export const reconcileReservations = async () => {
           },
         );
       });
+
       if (result.release) await releaseStock(row.orderId);
       else
         await prisma.stockReservation.updateMany({
@@ -43,6 +47,7 @@ export const reconcileReservations = async () => {
     }
   }
 };
+
 export const startReservationWorker = () => {
   const tick = async () => {
     try {
@@ -50,16 +55,21 @@ export const startReservationWorker = () => {
     } catch (err) {
       logger.error({ err }, 'Reservation expiry failed');
     }
+
     if (!stopped)
       timer = setTimeout(() => {
         inFlight = tick();
       }, 60_000);
   };
+
   inFlight = tick();
 };
+
 export const stopReservationWorker = async () => {
   stopped = true;
+
   if (timer) clearTimeout(timer);
+
   await inFlight;
   client.close();
 };

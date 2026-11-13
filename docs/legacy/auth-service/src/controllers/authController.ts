@@ -56,11 +56,13 @@ export const logout = catchAsync(async (req: Request, res: Response) => {
 
 export const getMe = catchAsync(async (req: Request, res: Response) => {
   const userId = req.user?.id;
+
   if (!userId) {
     throw new ApiError(httpStatus.UNAUTHORIZED, 'Not authenticated');
   }
 
   const user = await authService.getUserById(userId);
+
   if (!user) {
     throw new ApiError(httpStatus.NOT_FOUND, 'User not found');
   }

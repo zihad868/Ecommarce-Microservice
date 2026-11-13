@@ -11,12 +11,13 @@ import { createLogger } from '@ecommerce/observability';
 import type { Logger } from 'pino';
 
 let logger: Logger = createLogger({ serviceName: 'grpc-service' });
+
 export const setGrpcLogger = (serviceLogger: Logger): void => {
   logger = serviceLogger;
 };
 
 /** Await binding before declaring the process ready; propagate startup failures. */
-export async function bindGrpc(
+export const bindGrpc = async (
   definition: ServiceDefinition,
   handlers: UntypedServiceImplementation,
   address: string,
@@ -25,22 +26,26 @@ export async function bindGrpc(
     definition: ServiceDefinition;
     handlers: UntypedServiceImplementation;
   }[] = [],
-): Promise<Server> {
+): Promise<Server> => {
   const server = new Server();
   server.addService(definition, handlers);
+
   for (const service of additionalServices) server.addService(service.definition, service.handlers);
+
   await new Promise<void>((resolve, reject) => {
     server.bindAsync(address, credentials, (error) => (error ? reject(error) : resolve()));
   });
-  return server;
-}
 
-export function unary<Request, Response>(
+  return server;
+};
+
+export const unary = <Request, Response>(
   handler: (request: Request, call: ServerUnaryCall<Request, Response>) => Promise<Response>,
-): (call: ServerUnaryCall<Request, Response>, callback: sendUnaryData<Response>) => void {
+): ((call: ServerUnaryCall<Request, Response>, callback: sendUnaryData<Response>) => void) => {
   return (call, callback) => {
     void (async () => {
       let response: Response;
+
       try {
         response = await handler(call.request, call);
       } catch (error) {
@@ -48,12 +53,16 @@ export function unary<Request, Response>(
           rpc: call.getPath(),
           correlationId: call.metadata.get('x-correlation-id')[0],
         };
+
         if (isServerError(error)) logger.error({ err: error, ...context }, 'Unhandled RPC error');
         else logger.debug({ err: error, ...context }, 'RPC rejected');
+
         callback(toGrpcError(error));
+
         return;
       }
+
       callback(null, response);
     })();
   };
-}
+};

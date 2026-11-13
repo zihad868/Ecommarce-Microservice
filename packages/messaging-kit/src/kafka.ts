@@ -2,13 +2,16 @@ import { Kafka } from 'kafkajs';
 import type { EachMessagePayload, Producer } from 'kafkajs';
 import { generateAuthToken } from 'aws-msk-iam-sasl-signer-js';
 
-export function createKafka(clientId: string, brokers: string[]): Kafka {
+export const createKafka = (clientId: string, brokers: string[]): Kafka => {
   if (!brokers.length || brokers.some((broker) => !broker.trim())) {
     throw new Error('At least one Kafka broker is required');
   }
+
   const useIam = process.env.KAFKA_MSK_IAM === 'true';
   const region = process.env.AWS_REGION;
+
   if (useIam && !region) throw new Error('AWS_REGION is required for MSK IAM');
+
   return new Kafka({
     clientId,
     brokers,
@@ -25,14 +28,14 @@ export function createKafka(clientId: string, brokers: string[]): Kafka {
         }
       : {}),
   });
-}
+};
 
 /** Failure to publish the DLQ must reject so Kafka does not commit the original offset. */
-export async function forwardToDlq(
+export const forwardToDlq = async (
   producer: Producer,
   payload: EachMessagePayload,
   error: Error,
-): Promise<void> {
+): Promise<void> => {
   await producer.send({
     topic: `${payload.topic}.dlq`,
     messages: [
@@ -49,4 +52,4 @@ export async function forwardToDlq(
       },
     ],
   });
-}
+};

@@ -81,6 +81,7 @@ export const getMetricsBundle = (): MetricsRegistryBundle => {
   if (!metricsBundle) {
     return initMetrics('unknown-service');
   }
+
   return metricsBundle;
 };
 
@@ -91,6 +92,7 @@ export const metricsMiddleware = () => {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (req.path === '/metrics' || req.path.startsWith('/health')) {
       next();
+
       return;
     }
 

@@ -39,6 +39,7 @@ Use Conventional Commits; Husky and Commitlint enforce the repository convention
   - `UPPER_SNAKE_CASE` for constants.
 - **Import order**: Node built-ins, followed by external packages, then workspace packages (`@ecommerce/*`), and finally relative imports. The ESLint plugin `eslint-plugin-import` or `simple-import-sort` automates this.
 - **Small functions and files**: Aim for one responsibility per function and keep files under ~300 lines.
+- **Functions**: Use `const` arrow functions for named helpers and exports, and arrow callbacks. Keep class constructors in their required constructor syntax. Declare helpers before any calls made during module initialization.
 - **Blank lines**: Keep blank lines between logical blocks inside functions. Prettier preserves single blank lines you add, so use them to separate steps.
 - **Comments**: Explain _why_, not _what_, and avoid commented-out code.
 - **No magic numbers or strings**: Move magic numbers and strings to named constants or the config package.

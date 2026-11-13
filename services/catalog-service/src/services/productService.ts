@@ -16,10 +16,13 @@ const getListVersion = async (): Promise<string> => {
   try {
     const redis = getRedisClient();
     const version = await redis.get('products:list:version');
+
     if (!version) {
       await redis.set('products:list:version', '1');
+
       return '1';
     }
+
     return version;
   } catch {
     return '1';
@@ -58,6 +61,7 @@ export const createProduct = async (data: CreateProductInput): Promise<Product> 
   });
 
   await invalidateListCache();
+
   return product;
 };
 
@@ -72,6 +76,7 @@ export const getProducts = async (query: ListProductsQuery) => {
   try {
     const redis = getRedisClient();
     const cached = await redis.get(cacheKey);
+
     if (cached) {
       return JSON.parse(cached) as {
         products: Product[];
@@ -97,9 +102,11 @@ export const getProducts = async (query: ListProductsQuery) => {
 
   if (query.minPrice !== undefined || query.maxPrice !== undefined) {
     where.price = {};
+
     if (query.minPrice !== undefined) {
       where.price.gte = new Prisma.Decimal(query.minPrice);
     }
+
     if (query.maxPrice !== undefined) {
       where.price.lte = new Prisma.Decimal(query.maxPrice);
     }
@@ -145,6 +152,7 @@ export const getProductById = async (id: string): Promise<Product | null> => {
   try {
     const redis = getRedisClient();
     const cached = await redis.get(cacheKey);
+
     if (cached) {
       return JSON.parse(cached) as Product;
     }
@@ -168,16 +176,23 @@ export const getProductById = async (id: string): Promise<Product | null> => {
 
 export const updateProduct = async (id: string, data: UpdateProductInput): Promise<Product> => {
   const existing = await prisma.product.findUnique({ where: { id } });
+
   if (!existing) {
     throw new NotFoundError('Product');
   }
 
   const updateData: Prisma.ProductUpdateInput = {};
+
   if (data.name !== undefined) updateData.name = data.name;
+
   if (data.description !== undefined) updateData.description = data.description;
+
   if (data.price !== undefined) updateData.price = new Prisma.Decimal(data.price);
+
   if (data.stock !== undefined) updateData.stock = data.stock;
+
   if (data.category !== undefined) updateData.category = data.category;
+
   if (data.attributes !== undefined) {
     updateData.attributes = data.attributes as object;
   }
@@ -188,11 +203,13 @@ export const updateProduct = async (id: string, data: UpdateProductInput): Promi
   });
 
   await invalidateProductCache(id);
+
   return product;
 };
 
 export const deleteProduct = async (id: string): Promise<void> => {
   const existing = await prisma.product.findUnique({ where: { id } });
+
   if (!existing) {
     throw new NotFoundError('Product');
   }
@@ -222,9 +239,11 @@ export const decrementProductStockTx = async (
 
   if (updatedCount === 0) {
     const current = await tx.product.findUnique({ where: { id: productId } });
+
     if (!current) {
       throw new NotFoundError('Product');
     }
+
     throw new InsufficientStockError('Insufficient stock', {
       productId,
       available: current.stock,

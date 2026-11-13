@@ -34,16 +34,20 @@ const parseJson = (text: string): unknown => {
 export const productHandlers: ProductServiceHandlers = {
   GetProduct: unary(async (request) => {
     const product = await products.getProductForOrder(request.productId);
+
     if (!product) throw new NotFoundError('Product');
+
     return toProductProto(product);
   }),
   ReserveStock: unary(async (request) => stock.reserveStock(request.orderId, request.items)),
   ReleaseStock: unary(async (request) => {
     await stock.releaseStock(request.orderId);
+
     return {};
   }),
   ListProducts: unary(async (request) => {
     let parsedInput: unknown = request;
+
     if ('queryJson' in request && (request as { queryJson?: string }).queryJson) {
       parsedInput = parseJson((request as { queryJson?: string }).queryJson ?? '{}');
     } else {
@@ -53,13 +57,17 @@ export const productHandlers: ProductServiceHandlers = {
         limit: request.limit || undefined,
       };
     }
+
     const input = listProductsQuerySchema.safeParse(parsedInput);
+
     if (!input.success)
       throw new ValidationError(
         'Invalid query',
         input.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
       );
+
     const result = await products.getProducts(input.data);
+
     return {
       products: result.products.map(toProductProto),
       page: {
@@ -72,26 +80,31 @@ export const productHandlers: ProductServiceHandlers = {
   CreateProduct: unary(async (request, call) => {
     requireAdmin(call.metadata);
     const input = createProductSchema.safeParse(parseJson(request.dataJson));
+
     if (!input.success)
       throw new ValidationError(
         'Invalid product',
         input.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
       );
+
     return toProductProto(await products.createProduct(input.data));
   }),
   UpdateProduct: unary(async (request, call) => {
     requireAdmin(call.metadata);
     const input = updateProductSchema.safeParse(parseJson(request.dataJson));
+
     if (!input.success)
       throw new ValidationError(
         'Invalid product',
         input.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message })),
       );
+
     return toProductProto(await products.updateProduct(request.productId, input.data));
   }),
   DeleteProduct: unary(async (request, call) => {
     requireAdmin(call.metadata);
     await products.deleteProduct(request.productId);
+
     return {};
   }),
 };

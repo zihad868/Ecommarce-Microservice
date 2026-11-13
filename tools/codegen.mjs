@@ -6,7 +6,8 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-function protos(directory) {
+
+const protos = (directory) => {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory()
       ? protos(join(directory, entry.name))
@@ -14,7 +15,8 @@ function protos(directory) {
         ? [join(directory, entry.name)]
         : [],
   );
-}
+};
+
 const output = join(root, 'packages/proto-gen/src/generated');
 mkdirSync(output, { recursive: true });
 const result = spawnSync(
@@ -42,11 +44,14 @@ const result = spawnSync(
   ],
   { cwd: root, stdio: 'inherit' },
 );
+
 if (result.status !== 0) process.exit(result.status ?? 1);
+
 // Keep generated headers reproducible across developer machines and CI.
-function normalize(directory) {
+const normalize = (directory) => {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const file = join(directory, entry.name);
+
     if (entry.isDirectory()) normalize(file);
     else if (file.endsWith('.ts'))
       writeFileSync(
@@ -60,5 +65,6 @@ function normalize(directory) {
           .replaceAll('\r\n', '\n'),
       );
   }
-}
+};
+
 normalize(output);

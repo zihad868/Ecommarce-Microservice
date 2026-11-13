@@ -16,9 +16,11 @@ export const createOrderSchema = z.object({
     .transform((items) => {
       // Merge duplicate productIds automatically
       const merged = new Map<string, number>();
+
       for (const item of items) {
         merged.set(item.productId, (merged.get(item.productId) ?? 0) + item.quantity);
       }
+
       return Array.from(merged.entries()).map(([productId, quantity]) => ({
         productId,
         quantity,

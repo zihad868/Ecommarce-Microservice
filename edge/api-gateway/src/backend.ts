@@ -87,13 +87,13 @@ export interface GatewayBackend {
   ): Promise<{ orders: OrderResult[]; nextCursor?: string }>;
 }
 
-export function createBackend(options: {
+export const createBackend = (options: {
   identity: string;
   catalog: string;
   order: string;
   timeoutMs?: number;
   verifyToken?: (token: string) => Promise<TokenResult>;
-}): GatewayBackend & { close(): void; ready(): Promise<void> } {
+}): GatewayBackend & { close(): void; ready(): Promise<void> } => {
   const auth = new (loadAuthV2().auth.v2.AuthService)(options.identity, getClientCredentials());
   const product = new (loadProduct().product.v1.ProductService)(
     options.catalog,
@@ -101,10 +101,12 @@ export function createBackend(options: {
   );
   const order = new (loadOrderV2().order.v2.OrderService)(options.order, getClientCredentials());
   const clients: Client[] = [auth, product, order];
+
   const deadline = () => new Date(Date.now() + (options.timeoutMs ?? 3000));
-  function call<T>(
+
+  const call = <T>(
     invoke: (callback: (error: ServiceError | null, response?: T) => void) => void,
-  ): Promise<T> {
+  ): Promise<T> => {
     return new Promise((resolve, reject) =>
       invoke((error, response) => {
         if (error) reject(error);
@@ -112,7 +114,8 @@ export function createBackend(options: {
         else resolve(response);
       }),
     );
-  }
+  };
+
   return {
     logout: (refreshToken, meta) =>
       call((cb) => {
@@ -153,6 +156,7 @@ export function createBackend(options: {
       }),
     validateToken: (token) => {
       if (!options.verifyToken) throw new Error('Local JWT verifier is required');
+
       return options.verifyToken(token);
     },
     login: (input, meta) =>
@@ -198,4 +202,4 @@ export function createBackend(options: {
       );
     },
   };
-}
+};

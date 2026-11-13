@@ -37,7 +37,7 @@ export const createLogger = (options: CreateLoggerOptions): Logger => {
       censor: '[REDACTED]',
     },
     formatters: {
-      level(label: string) {
+      level: (label: string) => {
         return { level: label };
       },
     },

@@ -39,6 +39,7 @@ export const connectKafkaProducer = async (): Promise<void> => {
       consumer,
       isRetryable: (error) => {
         const known = normalizeError(error);
+
         return !known || known.statusCode >= 500;
       },
       dlq: producer,
@@ -46,6 +47,7 @@ export const connectKafkaProducer = async (): Promise<void> => {
       decode: (_topic, bytes) => decodeStockReservationFailed(bytes),
       handle: async (event) => {
         if (!event.orderId) throw new ValidationError('Missing order ID');
+
         await cancelOrderForStockFailure(event.orderId);
       },
     });
@@ -56,6 +58,7 @@ export const connectKafkaProducer = async (): Promise<void> => {
     await consumer?.disconnect().catch(() => undefined);
     await producer?.disconnect().catch(() => undefined);
     producer = null;
+
     if (!stopping)
       retryTimer = setTimeout(() => {
         void connectKafkaProducer();
@@ -72,6 +75,7 @@ export const publishEvent = async (topic: string, key: string, data: unknown): P
 
   let value: Buffer;
   let contentType = 'application/x-protobuf';
+
   if (topic === TOPICS.orderCreated) {
     value = encodeOrderCreated(data);
   } else if (topic === TOPICS.stockReleaseRequested) {
@@ -99,11 +103,15 @@ export const publishEvent = async (topic: string, key: string, data: unknown): P
 
 export const disconnectKafkaProducer = async (): Promise<void> => {
   stopping = true;
+
   if (retryTimer) clearTimeout(retryTimer);
+
   await consumer?.disconnect();
+
   if (producer) {
     await producer.disconnect();
     logger.info('Order Kafka disconnected');
   }
+
   producer = null;
 };
