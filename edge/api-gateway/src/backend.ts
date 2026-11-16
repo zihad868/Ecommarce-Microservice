@@ -9,11 +9,13 @@ export interface TokenResult {
   role: string;
   error: string;
 }
+
 export interface Money {
   amount_minor?: string | number;
   amount?: string;
   currency?: string;
 }
+
 export interface ProductResult {
   id: string;
   name: string;
@@ -22,10 +24,12 @@ export interface ProductResult {
   category?: string;
   description?: string;
 }
+
 export interface PageInfo {
   total?: number;
   nextCursor?: string;
 }
+
 export interface OrderResult {
   id: string;
   userId: string;

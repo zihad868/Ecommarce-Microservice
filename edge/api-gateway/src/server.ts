@@ -25,7 +25,7 @@ const env = parseEnv(
     REDIS_PORT: port.default(6379),
     REDIS_PASSWORD: z.string().optional(),
     GATEWAY_REQUEST_LIMIT: z.coerce.number().int().positive().default(300),
-    AUTH_REQUEST_LIMIT: z.coerce.number().int().positive().default(30),
+    AUTH_REQUEST_LIMIT: z.coerce.number().int().positive().default(60),
   }),
 );
 
