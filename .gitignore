@@ -10,11 +10,8 @@ build/
 .out/
 
 # Environment files
-.env
-.env.*
 
 # VS Code settings
-.vscode/*
 !.vscode/settings.json
 
 # OS files
@@ -43,3 +40,4 @@ coverage/
 platform/k8s/01-secrets.yaml
 
 .tmp/
+config.bat

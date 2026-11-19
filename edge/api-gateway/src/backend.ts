@@ -37,18 +37,22 @@ export interface OrderResult {
   items: { productId: string; quantity: number; price: Money | null }[];
   status: string;
 }
+
 export interface SessionResult {
   user: { id: string; email: string; role: string } | null;
   tokens: TokensResult | null;
 }
+
 export interface TokensResult {
   accessToken: string;
   refreshToken: string;
 }
+
 export interface Credentials {
   email: string;
   password: string;
 }
+
 export interface GatewayBackend {
   logout(this: void, refreshToken: string, context: Metadata): Promise<unknown>;
   me(this: void, context: Metadata): Promise<{ id: string; email: string; role: string }>;
