@@ -37,4 +37,3 @@ coverage/
 *.tfstate*
 *.tfplan
 platform/k8s/01-secrets.yaml
-config.bat

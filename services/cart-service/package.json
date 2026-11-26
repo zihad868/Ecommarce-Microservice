@@ -4,11 +4,11 @@
   "private": true,
   "main": "dist/server.js",
   "scripts": {
-    "build": "node init && tsc",
+    "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run src --passWithNoTests",
-    "start": "node init && node dist/server.js",
-    "dev": "node init && ts-node src/server.ts"
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts"
   },
   "dependencies": {
     "@ecommerce/config": "*",
