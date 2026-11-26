@@ -10,7 +10,7 @@
     "services/*"
   ],
   "scripts": {
-    "build": "node init && turbo run build",
+    "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -27,7 +27,7 @@
     "contracts:lint": "buf lint contracts",
     "contracts:breaking": "buf breaking contracts --against .git#branch=main,subdir=contracts",
     "check": "npm run contracts:check && npm run lint && npm run typecheck",
-    "dev:gateway": "node init && npm run dev --workspace api-gateway"
+    "dev:gateway": "npm run dev --workspace api-gateway"
   },
   "devDependencies": {
     "@bufbuild/buf": "^1.50.0",

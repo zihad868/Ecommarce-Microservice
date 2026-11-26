@@ -40,4 +40,3 @@ coverage/
 platform/k8s/01-secrets.yaml
 
 .tmp/
-config.bat
