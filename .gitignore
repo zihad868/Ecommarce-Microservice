@@ -10,11 +10,8 @@ build/
 .out/
 
 # Environment files
-.env
-.env.*
 
 # VS Code settings
-.vscode/*
 !.vscode/settings.json
 
 # OS files
