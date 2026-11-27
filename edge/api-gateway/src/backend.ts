@@ -55,24 +55,29 @@ export interface Credentials {
 
 export interface GatewayBackend {
   logout(this: void, refreshToken: string, context: Metadata): Promise<unknown>;
+
   me(this: void, context: Metadata): Promise<{ id: string; email: string; role: string }>;
+
   createOrder(
     this: void,
     items: { productId: string; quantity: number }[],
     key: string,
     context: Metadata,
   ): Promise<OrderResult>;
+
   updateOrder(
     this: void,
     orderId: string,
     status: OrderV2Status,
     context: Metadata,
   ): Promise<OrderResult>;
+
   products(
     this: void,
     query: { category?: string; search?: string; limit?: number; cursor?: string } | string,
     context: Metadata,
   ): Promise<{ products: ProductResult[]; page?: PageInfo | null; metaJson?: string }>;
+
   mutateProduct(
     this: void,
     action: 'create' | 'update' | 'delete',
@@ -82,11 +87,17 @@ export interface GatewayBackend {
   ): Promise<unknown>;
 
   validateToken(this: void, token: string, context: Metadata): Promise<TokenResult>;
+
   login(this: void, input: Credentials, context: Metadata): Promise<SessionResult>;
+
   register(this: void, input: Credentials, context: Metadata): Promise<SessionResult>;
+
   refresh(this: void, refreshToken: string, context: Metadata): Promise<TokensResult>;
+
   product(this: void, productId: string, context: Metadata): Promise<ProductResult>;
+
   order(this: void, orderId: string, context: Metadata): Promise<OrderResult>;
+
   orders(
     this: void,
     userId: string,
@@ -103,11 +114,14 @@ export const createBackend = (options: {
   verifyToken?: (token: string) => Promise<TokenResult>;
 }): GatewayBackend & { close(): void; ready(): Promise<void> } => {
   const auth = new (loadAuthV2().auth.v2.AuthService)(options.identity, getClientCredentials());
+
   const product = new (loadProduct().product.v1.ProductService)(
     options.catalog,
     getClientCredentials(),
   );
+
   const order = new (loadOrderV2().order.v2.OrderService)(options.order, getClientCredentials());
+
   const clients: Client[] = [auth, product, order];
 
   const deadline = () => new Date(Date.now() + (options.timeoutMs ?? 3000));
