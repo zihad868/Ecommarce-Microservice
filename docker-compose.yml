@@ -248,6 +248,7 @@ services:
       - 8081:8081
     environment:
       PORT: 8081
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
       AUTH_GRPC_URL: identity-service:50051
       PRODUCT_GRPC_URL: catalog-service:50052
       ORDER_GRPC_URL: order-service:50053

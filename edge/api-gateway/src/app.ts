@@ -27,10 +27,13 @@ export const createApp = (
     limiter?: RequestHandler;
     authLimiter?: RequestHandler;
     ready?: () => Promise<void>;
+    trustProxyHops?: number;
   },
 ): express.Express => {
   const app = express();
 
+  // Only enable behind the documented, network-isolated ingress path.
+  app.set('trust proxy', options.trustProxyHops ?? 0);
   app.disable('x-powered-by');
 
   app.use(helmet(), correlationIdMiddleware, express.json({ limit: '100kb' }));

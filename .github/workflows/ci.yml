@@ -85,6 +85,7 @@ jobs:
       - run: npm run format:check
       - run: npm run lint
       - run: npm run check
+      - run: npm run test:gateway
       - run: npm exec -- turbo run build typecheck --filter='./packages/*' --output-logs=errors-only
       - name: Validate Compose and Kubernetes rendering
         run: |

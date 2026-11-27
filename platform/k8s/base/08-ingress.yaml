@@ -8,6 +8,12 @@ spec:
     - host: ecommerce.local
       http:
         paths:
+          - path: /health/ready
+            pathType: Exact
+            backend:
+              service:
+                name: api-gateway
+                port: { number: 8081 }
           - path: /api
             pathType: Prefix
             backend:

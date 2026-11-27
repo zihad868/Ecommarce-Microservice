@@ -1,0 +1,95 @@
+name: Staging performance baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_rps:
+        description: Aggregate peak requests per second (size staging quotas and stock first)
+        default: '20'
+        required: true
+      steady_duration:
+        description: Time at peak load (access token must remain valid for the entire run)
+        default: '2m'
+        required: true
+      deployment_note:
+        description: Database/cache/broker sizing, pools, Kafka partitions, seed stock and gateway quotas
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  # Share the deployment workflow's lock to keep staging stable during measurement.
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  baseline:
+    runs-on: [self-hosted, linux, eks]
+    environment: staging
+    timeout-minutes: 30
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      EKS_CLUSTER: ${{ vars.EKS_CLUSTER }}
+      GATEWAY_URL: ${{ vars.GATEWAY_URL }}
+      LOAD_EMAIL: ${{ secrets.PERF_LOAD_EMAIL }}
+      LOAD_PASSWORD: ${{ secrets.PERF_LOAD_PASSWORD }}
+      PRODUCT_ID: ${{ vars.PERF_PRODUCT_ID }}
+      TARGET_RPS: ${{ inputs.target_rps }}
+      STEADY_DURATION: ${{ inputs.steady_duration }}
+      DEPLOYMENT_NOTE: ${{ inputs.deployment_note }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: grafana/setup-k6-action@v1
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Validate inputs and capture deployment evidence
+        env:
+          KUBECONFIG: ${{ runner.temp }}/performance-kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in GATEWAY_URL LOAD_EMAIL LOAD_PASSWORD PRODUCT_ID EKS_CLUSTER; do
+            if [ -z "${!name}" ]; then
+              echo "Missing staging configuration: $name" >&2
+              exit 1
+            fi
+          done
+          mkdir -p docs/perf/results
+          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+          {
+            date -u +'%Y-%m-%dT%H:%M:%SZ'
+            k6 version
+            printf 'Load script commit: %s\nTarget: %s\nPeak RPS: %s\nSteady duration: %s\n' "$GITHUB_SHA" "$GATEWAY_URL" "$TARGET_RPS" "$STEADY_DURATION"
+            printf 'Deployment note: %s\n' "$DEPLOYMENT_NOTE"
+            printf 'Load generator: '
+            uname -a
+            lscpu
+            free -h
+            kubectl -n ecommerce-staging get deployments -o 'custom-columns=NAME:.metadata.name,DESIRED:.spec.replicas,READY:.status.readyReplicas,IMAGES:.spec.template.spec.containers[*].image,REQUESTS:.spec.template.spec.containers[*].resources.requests,LIMITS:.spec.template.spec.containers[*].resources.limits'
+            kubectl -n ecommerce-staging get pods -o 'custom-columns=NAME:.metadata.name,IMAGES:.status.containerStatuses[*].imageID'
+            kubectl -n ecommerce-staging get hpa
+            kubectl get nodes -L node.kubernetes.io/instance-type
+          } > docs/perf/results/deployment.txt
+      - name: Run baseline and preserve threshold exit status
+        env:
+          KUBECONFIG: ${{ runner.temp }}/performance-kubeconfig
+        shell: bash
+        run: |
+          set -uo pipefail
+          set +e
+          k6 run --summary-export=docs/perf/results/summary.json tools/k6/load-test.js 2>&1 | tee docs/perf/results/k6.log
+          result=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$result" > docs/perf/results/exit-code.txt
+          kubectl -n ecommerce-staging get hpa > docs/perf/results/hpa-after.txt 2>&1 || true
+          exit "$result"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-performance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: docs/perf/results/
+          if-no-files-found: warn

@@ -5,6 +5,26 @@ from `services/`. Each application includes Deployment, Service, HPA and PDB.
 The `overlays/dev`, `overlays/staging`, and `overlays/prod` directories choose
 namespaces and replicas. Ingress routes `/api` to the gateway.
 
+The gateway trusts exactly one HTTP proxy hop in Kubernetes (`TRUST_PROXY_HOPS=1`).
+Its NetworkPolicy permits HTTP only from controller pods labelled
+`app.kubernetes.io/name=ingress-nginx` and `app.kubernetes.io/component=controller`
+in the `ingress-nginx` namespace; keep the
+gateway Service internal and use a CNI that enforces NetworkPolicies. The ingress
+controller must overwrite incoming `X-Forwarded-For` headers (the default with
+`use-forwarded-headers: "false"` and `compute-full-forwarded-for: "false"`). If an
+external load balancer supplies client IPs, configure the controller to trust
+only that balancer's actual source CIDRs before enabling forwarded headers.
+Do not expose the gateway directly with this hop setting. Compose and direct
+Node execution default to `TRUST_PROXY_HOPS=0` and ignore forwarded client IPs.
+
+`/health/ready` is also routed through ingress for deployment and load-test
+preflight checks. Readiness requires both gRPC backends and Redis; liveness
+stays independent so a dependency outage does not cause restart loops.
+Redis quota failures return 503 rather than allowing unlimited requests. JWT
+revocation lookup failures also return 503 for every role, including regular
+users. This deliberately trades availability for enforcement during an outage.
+Staging and prod enable Redis TLS for the gateway's managed-cache connection.
+
 Render without contacting a cluster:
 
 ```sh

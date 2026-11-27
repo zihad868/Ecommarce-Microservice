@@ -41,10 +41,7 @@ export const localTokenVerifier = (
     } catch {
       redisRevocationErrors.inc();
 
-      if (payload.role === 'ADMIN') {
-        throw new DependencyUnavailableError('Session check unavailable');
-      }
-      /* Redis outage degrades to signature and expiry validation for regular users. */
+      throw new DependencyUnavailableError('Session check unavailable');
     }
 
     if (cutoff && Number(payload.issuedAt) <= Number(cutoff))

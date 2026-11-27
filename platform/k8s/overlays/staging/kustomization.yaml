@@ -171,6 +171,8 @@ patches:
             containers:
               - name: api-gateway
                 env:
+                  - name: REDIS_TLS
+                    value: "true"
                   - name: GRPC_TLS_REQUIRED
                     value: "true"
                   - name: GRPC_TLS_CA

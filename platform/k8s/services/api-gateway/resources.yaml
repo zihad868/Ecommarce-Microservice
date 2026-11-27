@@ -24,6 +24,9 @@ spec:
           env:
             - name: PORT
               value: '8081'
+            # HTTP access is restricted to ingress-nginx by api-gateway-netpol.
+            - name: TRUST_PROXY_HOPS
+              value: '1'
             - name: AUTH_GRPC_URL
               value: identity-service:50051
             - name: PRODUCT_GRPC_URL

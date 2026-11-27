@@ -1,7 +1,7 @@
 import { localTokenVerifier } from './tokenVerifier';
 import { z } from 'zod';
 import { parseEnv, port } from '@ecommerce/config';
-import { createRedisClient, createRedisRateLimiter } from '@ecommerce/cache-kit';
+import { createRedisClient } from '@ecommerce/cache-kit';
 import { registerGracefulShutdown } from '@ecommerce/grpc-kit';
 import {
   createLogger,
@@ -11,6 +11,7 @@ import {
 } from '@ecommerce/observability';
 import { createApp, rejectRateLimitedRequest } from './app';
 import { createBackend } from './backend';
+import { createGatewayRateLimiter, createGatewayReadiness } from './protection';
 import express from 'express';
 
 const env = parseEnv(
@@ -26,6 +27,7 @@ const env = parseEnv(
     REDIS_PASSWORD: z.string().optional(),
     GATEWAY_REQUEST_LIMIT: z.coerce.number().int().positive().default(300),
     AUTH_REQUEST_LIMIT: z.coerce.number().int().positive().default(60),
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   }),
 );
 
@@ -49,22 +51,23 @@ initMetrics('api-gateway');
 
 const app = express();
 
+app.set('trust proxy', env.TRUST_PROXY_HOPS);
+app.disable('x-powered-by');
 app.use(metricsMiddleware());
 
 app.use(
   createApp(backend, {
     logger,
-    ready: async () => {
-      await backend.ready();
-    },
-    limiter: createRedisRateLimiter({
+    trustProxyHops: env.TRUST_PROXY_HOPS,
+    ready: createGatewayReadiness(backend, redis),
+    limiter: createGatewayRateLimiter({
       redisClient: redis,
       windowMs: 60_000, // 1 minute
       max: env.GATEWAY_REQUEST_LIMIT,
       prefix: 'rl:gateway:',
       handler: rejectRateLimitedRequest,
     }),
-    authLimiter: createRedisRateLimiter({
+    authLimiter: createGatewayRateLimiter({
       redisClient: redis,
       windowMs: 900_000, // 15 minutes
       max: env.AUTH_REQUEST_LIMIT,
